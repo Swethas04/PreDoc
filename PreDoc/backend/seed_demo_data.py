@@ -1,3 +1,4 @@
+import os
 import base64
 import logging
 from datetime import datetime, timezone
@@ -14,9 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("seed_demo_data")
 
 
-def generate_prescription_image_base64() -> str:
-    """Generates a crisp, realistic SVG clinical prescription slip encoded as base64."""
-    svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800" width="600" height="800">
+DEMO_PRESCRIPTION_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800" width="600" height="800">
   <defs>
     <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#0f172a" />
@@ -96,7 +95,11 @@ def generate_prescription_image_base64() -> str:
   <text x="430" y="735" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#0f172a">Dr. Arvind Mehta</text>
   <text x="430" y="750" font-family="Arial, sans-serif" font-size="9.5" fill="#64748b">MD, DM (Cardiology / Internal Med)</text>
 </svg>"""
-    b64_bytes = base64.b64encode(svg.encode("utf-8")).decode("utf-8")
+
+
+def generate_prescription_image_base64() -> str:
+    """Generates a crisp, realistic SVG clinical prescription slip encoded as base64."""
+    b64_bytes = base64.b64encode(DEMO_PRESCRIPTION_SVG.encode("utf-8")).decode("utf-8")
     return f"data:image/svg+xml;base64,{b64_bytes}"
 
 
@@ -311,12 +314,26 @@ def seed_demo_patients(db: Session = None):
         db.add_all(t2_turns)
         db.flush()
 
-        # Uploaded Prescription Document with Realistic Base64 Image
+        # Uploaded Prescription Document with Realistic SVG on Disk & Base64
         rx_image_base64 = generate_prescription_image_base64()
+        from app.services.document_storage import UPLOAD_DIR
+        svg_filename = "Prescription_DrMehta_Clinic.svg"
+        svg_disk_path = os.path.join(UPLOAD_DIR, svg_filename)
+        try:
+            raw_svg = DEMO_PRESCRIPTION_SVG.encode("utf-8")
+            with open(svg_disk_path, "wb") as f:
+                f.write(raw_svg)
+        except Exception as e:
+            logger.warning("Could not write demo prescription to %s: %s", svg_disk_path, e)
+
         doc2 = DocumentRecord(
+            patient_id=p2.id,
             visit_id=v2.id,
-            filename="Prescription_DrMehta_Clinic.png",
+            filename="Prescription_DrMehta_Clinic.svg",
             mime_type="image/svg+xml",
+            label="Prescription - Metropolitan Health Clinic",
+            file_url=f"/uploads/{svg_filename}",
+            file_path=svg_disk_path,
             raw_text="Metropolitan Health Clinic - Dr. Arvind Mehta MD. Patient: Suresh Kumar (62/M). Rx: Tab. Metformin HCl 500mg BD, Tab. Telmisartan 40mg OD, Tab. Atorvastatin 10mg HS. BP: 138/84 mmHg, FBS: 132 mg/dL, HbA1c: 6.8%.",
             extracted_json={
                 "drug_names": [

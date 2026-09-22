@@ -1,7 +1,5 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy import JSON
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -10,34 +8,36 @@ class DocumentRecord(Base):
     __tablename__ = "document_records"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    patient_id = Column(
+        Integer,
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     visit_id = Column(
         Integer,
-        ForeignKey("visits.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("visits.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     filename = Column(String(512), nullable=False)
     mime_type = Column(String(100), nullable=False, default="image/jpeg")
+    label = Column(String(255), nullable=True)
 
-    # Structured extraction from Gemini Vision
-    # {
-    #   "drug_names": [{"name": str, "dosage": str, "dosage_normalized": {"value": float, "unit": str}}],
-    #   "diagnoses": [str],
-    #   "dates": [{"label": str, "value": str (ISO 8601 or best-effort)}],
-    #   "measurements": [{"type": str, "raw": str, ...normalized fields}]
-    # }
-    extracted_json = Column(JSON, nullable=True)
+    # File paths & static URL
+    file_url = Column(String(1024), nullable=True)
+    file_path = Column(String(1024), nullable=True)
 
-    # Raw Gemini text output before JSON parsing (useful for debugging)
-    raw_text = Column(Text, nullable=True)
-
-    # Base64 encoded preview/image data for side-by-side doctor review
+    # Base64 encoded file/image data for viewing
     image_base64 = Column(Text, nullable=True)
+    raw_text = Column(Text, nullable=True)
+    extracted_json = Column(JSON, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Relationship
+    # Relationships
+    patient = relationship("Patient", back_populates="document_records")
     visit = relationship("Visit", back_populates="document_records")
 
     def __repr__(self) -> str:
-        return f"<DocumentRecord(id={self.id}, visit_id={self.visit_id}, filename='{self.filename}')>"
+        return f"<DocumentRecord(id={self.id}, patient_id={self.patient_id}, visit_id={self.visit_id}, filename='{self.filename}', label='{self.label}')>"

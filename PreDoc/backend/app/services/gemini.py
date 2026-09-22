@@ -1207,7 +1207,19 @@ def _generate_fallback_soap(
     # 6. Previous Investigations
     investigation_items = []
     for doc in documents:
-        raw_json = doc.extracted_json or {}
+        lbl = getattr(doc, "label", None) or getattr(doc, "filename", "Document")
+        doc_entry = {
+            "fact": f"Uploaded medical document on file: {lbl} ({doc.filename}) — available in Patient Records panel for direct review.",
+            "category": "Prior Medical Records",
+            "source": {
+                "type": "document",
+                "id": doc.id,
+                "label": f"Document #{doc.id}",
+                "quote": f"{doc.filename}: {lbl}",
+            },
+        }
+        investigation_items.append(doc_entry)
+        raw_json = getattr(doc, "extracted_json", None) or {}
         for m in raw_json.get("measurements", []):
             raw_m = m.get("raw") if isinstance(m, dict) else str(m)
             m_type = m.get("type", "Investigation") if isinstance(m, dict) else "Measurement"

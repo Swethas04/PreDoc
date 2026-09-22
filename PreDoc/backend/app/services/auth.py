@@ -285,4 +285,56 @@ def seed_staff_users(db: Session) -> None:
         logger.warning("[Auth] Could not seed demo users: %s", e)
 
 
+def create_token_for_user(user: User) -> str:
+    """Create a signed JWT token for a user object (supports username, email, role)."""
+    sub_val = user.username or user.email or str(user.id)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+    payload = {
+        "sub": sub_val,
+        "role": user.role,
+        "user_id": user.id,
+        "email": getattr(user, "email", None),
+        "name": getattr(user, "name", None),
+        "exp": expire,
+    }
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Resolves authenticated user from Authorization Bearer JWT token if present."""
+    if credentials is None:
+        return None
+    token = credentials.credentials
+    try:
+        raw = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        user_id = raw.get("user_id")
+        sub = raw.get("sub")
+        user = None
+        if user_id:
+            user = db.query(User).filter(User.id == user_id).first()
+        if not user and sub:
+            user = db.query(User).filter((User.username == sub) | (User.email == sub)).first()
+        return user
+    except Exception:
+        return None
+
+
+def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    """Dependency that requires an authenticated user."""
+    user = get_current_user_optional(credentials, db)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Please log in.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
+
+
 

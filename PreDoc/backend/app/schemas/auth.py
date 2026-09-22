@@ -1,24 +1,56 @@
-from typing import Literal, Optional
+from typing import Optional, Any
+from datetime import datetime
 from pydantic import BaseModel
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: Optional[str] = None
+    email: Optional[str] = None
+    password: str = "password123"
+
+
+class UserLoginRequest(BaseModel):
+    email: Optional[str] = None
+    username: Optional[str] = None
+    password: str = "password123"
+
+
+class UserRegisterRequest(BaseModel):
+    email: Optional[str] = None
+    username: Optional[str] = None
+    name: str
+    role: str = "patient"  # 'patient' | 'doctor' | 'nurse'
+    password: str = "password123"
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    phone: Optional[str] = None
+    language: Optional[str] = "en"
 
 
 class UserInfo(BaseModel):
     id: int
-    username: str
-    role: Literal["doctor", "nurse"]
+    username: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    role: str = "nurse"
+    patient_profile_id: Optional[int] = None
+    created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+UserRead = UserInfo
 
 
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    token: Optional[str] = None
     user: UserInfo
+    message: str = "Authentication successful"
+
+
+AuthResponse = LoginResponse
 
 
 class TokenPayload(BaseModel):

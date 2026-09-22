@@ -1,174 +1,271 @@
+import os
+import base64
 import logging
-import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.patient import Patient
 from app.models.visit import Visit
 from app.models.document_record import DocumentRecord
+from app.models.patient_document import PatientDocument
 from app.schemas.document import (
-    ExtractResponse,
-    ExtractedData,
-    DrugEntry,
-    MeasurementEntry,
-    DateEntry,
+    DocumentUploadResponse,
     DocumentRecordRead,
     DocumentListResponse,
+    PatientDocumentsResponse,
 )
-from app.services.gemini import extract_medical_document
-from app.services.auth import get_current_actor, verify_visit_access
+from app.services.document_storage import (
+    save_file_to_disk,
+    resolve_document_content,
+    detect_mime_type,
+    ALLOWED_EXTENSIONS,
+)
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("predoc.documents")
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
 
-ALLOWED_MIME_TYPES = {
-    "image/jpeg", "image/jpg", "image/png", "image/webp",
-    "image/heic", "image/heif", "image/gif", "image/bmp",
-}
+
+def _find_document_model(document_id: int, db: Session):
+    """Find document across PatientDocument or DocumentRecord models."""
+    patient_doc = db.query(PatientDocument).filter(PatientDocument.id == document_id).first()
+    if patient_doc:
+        return patient_doc
+
+    doc_rec = db.query(DocumentRecord).filter(DocumentRecord.id == document_id).first()
+    if doc_rec:
+        return doc_rec
+
+    return None
 
 
 # ---------------------------------------------------------------------------
-# POST /api/documents/extract
+# POST /api/documents/upload and /api/documents/extract (Direct Document Storage)
 # ---------------------------------------------------------------------------
-@router.post("/extract", response_model=ExtractResponse)
-async def extract_document(
-    visit_id: int = Form(...),
+@router.post("/upload", response_model=DocumentUploadResponse)
+@router.post("/extract", response_model=DocumentUploadResponse)
+async def upload_document(
+    patient_id: Optional[int] = Form(None),
+    visit_id: Optional[int] = Form(None),
+    label: Optional[str] = Form(None),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    actor: Optional[dict] = Depends(get_current_actor),
 ):
     """
-    Upload a medical document image. Sends it to Gemini Vision for structured
-    extraction (drugs, diagnoses, dates, measurements) with unit normalization.
-    Stores the result against the visit_id and returns the structured JSON.
+    Upload and directly store a medical document/file (Image, PDF, DOCX, DOC, etc.).
+    Saves the physical file to backend/uploads, persists metadata, and returns reachable file URLs.
     """
-    # Validate or auto-create visit
-    visit = db.query(Visit).filter(Visit.id == visit_id).first() if visit_id and visit_id > 0 else None
-    if visit:
-        verify_visit_access(visit, actor)
-    if not visit:
-        # Create an intake patient & visit so upload always succeeds smoothly
+    resolved_patient_id = patient_id
+    resolved_visit_id = visit_id
+
+    # If visit_id is provided, resolve patient from visit
+    if resolved_visit_id and resolved_visit_id > 0:
+        visit = db.query(Visit).filter(Visit.id == resolved_visit_id).first()
+        if visit:
+            resolved_patient_id = visit.patient_id
+        else:
+            patient = Patient(name="Intake Patient", age=None, language="en")
+            db.add(patient)
+            db.flush()
+            resolved_patient_id = patient.id
+            visit = Visit(patient_id=patient.id, status="intake_in_progress", urgency_flag=False)
+            db.add(visit)
+            db.flush()
+            resolved_visit_id = visit.id
+    elif not resolved_patient_id or resolved_patient_id <= 0:
         patient = Patient(name="Intake Patient", age=None, language="en")
         db.add(patient)
         db.flush()
-        visit = Visit(
-            patient_id=patient.id,
-            status="intake_in_progress",
-            urgency_flag=False,
-            visit_token=str(uuid.uuid4()),
-        )
+        resolved_patient_id = patient.id
+        visit = Visit(patient_id=patient.id, status="intake_in_progress", urgency_flag=False)
         db.add(visit)
-        db.commit()
-        db.refresh(visit)
-        visit_id = visit.id
+        db.flush()
+        resolved_visit_id = visit.id
 
-    # Validate MIME type
-    mime = (file.content_type or "").lower()
-    if mime not in ALLOWED_MIME_TYPES:
+    patient_exists = db.query(Patient).filter(Patient.id == resolved_patient_id).first()
+    if not patient_exists:
         raise HTTPException(
-            status_code=422,
-            detail=f"Unsupported file type '{mime}'. Accepted: JPEG, PNG, WebP, HEIC, GIF, BMP.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Patient with ID {resolved_patient_id} not found.",
         )
 
-    # Read image bytes
-    image_bytes = await file.read()
-    if len(image_bytes) == 0:
-        raise HTTPException(status_code=422, detail="Uploaded file is empty.")
-    if len(image_bytes) > 20 * 1024 * 1024:  # 20 MB limit
-        raise HTTPException(status_code=413, detail="File too large. Maximum 20 MB.")
+    # Read uploaded bytes
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Uploaded file is empty.",
+        )
+    if len(file_bytes) > 50 * 1024 * 1024:  # 50 MB limit
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File too large. Maximum 50 MB.",
+        )
 
-    # Run Gemini Vision extraction
-    try:
-        extracted_dict, raw_text = extract_medical_document(image_bytes, mime)
-    except ValueError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        logger.error("Document extraction failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+    clean_filename = file.filename or "uploaded_document"
+    clean_label = (label.strip() if label else None) or None
 
-    # Persist to database with base64 for side-by-side doctor review
-    import base64
-    b64_encoded = f"data:{mime};base64,{base64.b64encode(image_bytes).decode('utf-8')}"
+    # Save to disk with proper MIME detection
+    saved_file = save_file_to_disk(
+        file_bytes=file_bytes,
+        filename=clean_filename,
+        mime_type=file.content_type,
+    )
+
+    # For images or lightweight files, generate base64 for instant preview fallback
+    b64_encoded = None
+    if len(file_bytes) <= 15 * 1024 * 1024:
+        b64_encoded = f"data:{saved_file['mime_type']};base64,{base64.b64encode(file_bytes).decode('utf-8')}"
 
     doc_record = DocumentRecord(
-        visit_id=visit_id,
-        filename=file.filename or "upload.jpg",
-        mime_type=mime,
-        extracted_json=extracted_dict,
-        raw_text=raw_text,
+        patient_id=resolved_patient_id,
+        visit_id=resolved_visit_id if (resolved_visit_id and resolved_visit_id > 0) else None,
+        filename=clean_filename,
+        mime_type=saved_file["mime_type"],
+        label=clean_label,
+        file_url=saved_file["file_url"],
+        file_path=saved_file["file_path"],
         image_base64=b64_encoded,
     )
     db.add(doc_record)
     db.commit()
     db.refresh(doc_record)
 
-    # Build typed response
-    drugs = [
-        DrugEntry(
-            name=d.get("name", ""),
-            dosage=d.get("dosage"),
-            dosage_normalized=d.get("dosage_normalized"),
-            frequency=d.get("frequency"),
-        )
-        for d in extracted_dict.get("drug_names", [])
-    ]
+    logger.info(
+        "[Document Upload] Stored document ID %d for patient_id=%d, visit_id=%s, file='%s', mime='%s'",
+        doc_record.id,
+        doc_record.patient_id,
+        doc_record.visit_id,
+        doc_record.filename,
+        doc_record.mime_type,
+    )
 
-    measurements = [
-        MeasurementEntry(
-            type=m.get("type", "Unknown"),
-            raw=m.get("raw", ""),
-            unit=m.get("unit"),
-            normalized={k: v for k, v in m.items() if k not in ("type", "raw")},
-        )
-        for m in extracted_dict.get("measurements", [])
-    ]
-
-    dates = [
-        DateEntry(
-            label=d.get("label", "Date"),
-            value=d.get("value", ""),
-            timestamp_ms=d.get("timestamp_ms"),
-        )
-        for d in extracted_dict.get("dates", [])
-        if isinstance(d, dict)
-    ]
-
-    return ExtractResponse(
+    return DocumentUploadResponse(
         document_id=doc_record.id,
-        visit_id=visit_id,
+        patient_id=doc_record.patient_id,
+        visit_id=doc_record.visit_id,
         filename=doc_record.filename,
-        extracted=ExtractedData(
-            drug_names=drugs,
-            diagnoses=extracted_dict.get("diagnoses", []),
-            dates=dates,
-            measurements=measurements,
-        ),
-        raw_text=raw_text,
+        mime_type=doc_record.mime_type,
+        label=doc_record.label,
+        image_base64=doc_record.image_base64,
+        file_url=f"/api/documents/{doc_record.id}/raw",
+        download_url=f"/api/documents/{doc_record.id}/download",
+        created_at=doc_record.created_at,
+        message="Document uploaded and stored successfully.",
     )
 
 
 # ---------------------------------------------------------------------------
-# GET /api/documents/{visit_id}
+# GET /api/documents/{document_id}/raw & /file (Serve raw file with Content-Type)
+# ---------------------------------------------------------------------------
+@router.get("/{document_id}/raw")
+@router.get("/{document_id}/file")
+def get_raw_document(document_id: int, db: Session = Depends(get_db)):
+    """
+    Serve raw binary content of a document with correct Content-Type and inline disposition.
+    Supports images, PDFs, Word docs, text files, and any medical attachments.
+    """
+    doc = _find_document_model(document_id, db)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document #{document_id} not found.",
+        )
+
+    content_bytes, actual_mime, filename = resolve_document_content(doc)
+    if not content_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document #{document_id} content is empty or unreadable.",
+        )
+
+    headers = {
+        "Content-Disposition": f'inline; filename="{filename}"',
+        "Content-Type": actual_mime,
+        "Cache-Control": "public, max-age=86400",
+        "Access-Control-Allow-Origin": "*",
+    }
+    return Response(content=content_bytes, media_type=actual_mime, headers=headers)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/documents/{document_id}/download (Serve document for attachment download)
+# ---------------------------------------------------------------------------
+@router.get("/{document_id}/download")
+def download_document(document_id: int, db: Session = Depends(get_db)):
+    """
+    Serve document file with Content-Disposition: attachment for direct download.
+    Forces download with original filename and correct extension.
+    """
+    doc = _find_document_model(document_id, db)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document #{document_id} not found.",
+        )
+
+    content_bytes, actual_mime, filename = resolve_document_content(doc)
+    if not content_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document #{document_id} content is empty or unreadable.",
+        )
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Type": actual_mime,
+        "Access-Control-Allow-Origin": "*",
+    }
+    return Response(content=content_bytes, media_type=actual_mime, headers=headers)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/documents/patient/{patient_id} (All documents across visits)
+# ---------------------------------------------------------------------------
+@router.get("/patient/{patient_id}", response_model=PatientDocumentsResponse)
+def get_patient_documents(patient_id: int, db: Session = Depends(get_db)):
+    """
+    Retrieve all documents ever uploaded for a given patient_id across all visits,
+    sorted by upload date (most recent first).
+    """
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Patient with ID {patient_id} not found.",
+        )
+
+    docs = (
+        db.query(DocumentRecord)
+        .filter(DocumentRecord.patient_id == patient_id)
+        .order_by(DocumentRecord.created_at.desc(), DocumentRecord.id.desc())
+        .all()
+    )
+
+    return PatientDocumentsResponse(
+        patient_id=patient_id,
+        documents=[DocumentRecordRead.model_validate(d) for d in docs],
+        total=len(docs),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/documents/{visit_id} (Documents for a visit)
 # ---------------------------------------------------------------------------
 @router.get("/{visit_id}", response_model=DocumentListResponse)
-def list_documents(
-    visit_id: int,
-    db: Session = Depends(get_db),
-    actor: Optional[dict] = Depends(get_current_actor),
-):
-    """Return all extracted document records for a visit, ordered by upload time."""
+@router.get("/visit/{visit_id}", response_model=DocumentListResponse)
+def list_visit_documents(visit_id: int, db: Session = Depends(get_db)):
+    """Return all document records for a visit, ordered by upload time (most recent first)."""
     visit = db.query(Visit).filter(Visit.id == visit_id).first()
     if not visit:
         return DocumentListResponse(visit_id=visit_id, documents=[], total=0)
-    verify_visit_access(visit, actor)
 
     docs = (
         db.query(DocumentRecord)
         .filter(DocumentRecord.visit_id == visit_id)
-        .order_by(DocumentRecord.created_at.asc())
+        .order_by(DocumentRecord.created_at.desc(), DocumentRecord.id.desc())
         .all()
     )
 

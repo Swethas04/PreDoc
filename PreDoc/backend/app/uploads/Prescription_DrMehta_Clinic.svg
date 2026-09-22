@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800" width="600" height="800">
+  <defs>
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Background Paper -->
+  <rect width="100%" height="100%" fill="#ffffff" rx="8" />
+  <rect x="15" y="15" width="570" height="770" fill="none" stroke="#cbd5e1" stroke-width="1.5" rx="6" />
+
+  <!-- Clinic Header -->
+  <rect x="25" y="25" width="550" height="110" fill="url(#headerGrad)" rx="6" />
+  <circle cx="65" cy="80" r="24" fill="#0d9488" />
+  <path d="M 65 68 L 65 92 M 53 80 L 77 80" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" />
+  
+  <text x="105" y="65" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#ffffff">METROPOLITAN HEALTH CLINIC</text>
+  <text x="105" y="85" font-family="Arial, sans-serif" font-size="12" fill="#99f6e4">Department of Internal Medicine &amp; Cardiology</text>
+  <text x="105" y="103" font-family="Arial, sans-serif" font-size="10" fill="#94a3b8">Dr. Arvind Mehta, MD (Internal Med) | Reg: MCI-548921</text>
+  <text x="105" y="118" font-family="Arial, sans-serif" font-size="9" fill="#64748b">Phone: +91 (11) 4892-0000 | 14 Ring Road, New Delhi</text>
+
+  <!-- Patient Details Bar -->
+  <rect x="25" y="145" width="550" height="55" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" rx="4" />
+  <text x="40" y="166" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#334155">Patient Name:</text>
+  <text x="125" y="166" font-family="Arial, sans-serif" font-size="11" fill="#0f172a">Mr. Suresh Kumar</text>
+
+  <text x="320" y="166" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#334155">Age / Gender:</text>
+  <text x="405" y="166" font-family="Arial, sans-serif" font-size="11" fill="#0f172a">62 Yrs / Male</text>
+
+  <text x="40" y="188" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#334155">Date:</text>
+  <text x="80" y="188" font-family="Arial, sans-serif" font-size="11" fill="#0f172a">15-Jun-2026</text>
+
+  <text x="320" y="188" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#334155">UHID / Ref:</text>
+  <text x="395" y="188" font-family="Arial, sans-serif" font-size="11" fill="#0f172a">MHC-2026-88412</text>
+
+  <!-- Vitals Box -->
+  <rect x="25" y="210" width="550" height="40" fill="#f0fdfa" stroke="#ccfbf1" stroke-width="1" rx="4" />
+  <text x="40" y="234" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#0f766e">Vitals &amp; Labs Recorded:</text>
+  <text x="180" y="234" font-family="Arial, sans-serif" font-size="11" fill="#134e4a">BP: 138/84 mmHg  |  FBS: 132 mg/dL  |  HbA1c: 6.8%  |  Pulse: 74 bpm</text>
+
+  <!-- Rx Symbol -->
+  <text x="35" y="290" font-family="Georgia, serif" font-size="34" font-weight="bold" font-style="italic" fill="#0d9488">℞</text>
+  <line x1="25" y1="305" x2="575" y2="305" stroke="#0d9488" stroke-width="1.5" stroke-dasharray="4,4" />
+
+  <!-- Medication List Table -->
+  <!-- Med 1 -->
+  <rect x="35" y="325" width="530" height="65" fill="#ffffff" stroke="#e2e8f0" rx="4" />
+  <text x="50" y="348" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#0f172a">1. Tab. Metformin Hydrochloride 500 mg</text>
+  <text x="50" y="372" font-family="Arial, sans-serif" font-size="11" fill="#475569">Dosage: 1 Tab Twice Daily (BD) — After Breakfast &amp; Dinner</text>
+  <text x="460" y="360" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#0d9488">Qty: 60 Tabs</text>
+
+  <!-- Med 2 -->
+  <rect x="35" y="400" width="530" height="65" fill="#ffffff" stroke="#e2e8f0" rx="4" />
+  <text x="50" y="423" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#0f172a">2. Tab. Telmisartan 40 mg</text>
+  <text x="50" y="447" font-family="Arial, sans-serif" font-size="11" fill="#475569">Dosage: 1 Tab Once Daily (OD) — Morning after food</text>
+  <text x="460" y="435" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#0d9488">Qty: 30 Tabs</text>
+
+  <!-- Med 3 -->
+  <rect x="35" y="475" width="530" height="65" fill="#ffffff" stroke="#e2e8f0" rx="4" />
+  <text x="50" y="498" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#0f172a">3. Tab. Atorvastatin 10 mg</text>
+  <text x="50" y="522" font-family="Arial, sans-serif" font-size="11" fill="#475569">Dosage: 1 Tab Once Daily (HS) — At bedtime</text>
+  <text x="460" y="510" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#0d9488">Qty: 30 Tabs</text>
+
+  <!-- Clinical Advice & Instructions -->
+  <rect x="25" y="555" width="550" height="110" fill="#f8fafc" stroke="#e2e8f0" rx="4" />
+  <text x="40" y="578" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#334155">Advice &amp; Instructions:</text>
+  <text x="40" y="598" font-family="Arial, sans-serif" font-size="10.5" fill="#475569">• Continue diabetic diet (low glycemic index, salt restricted &lt; 5g/day).</text>
+  <text x="40" y="616" font-family="Arial, sans-serif" font-size="10.5" fill="#475569">• 30 mins brisk walking 5 days/week.</text>
+  <text x="40" y="634" font-family="Arial, sans-serif" font-size="10.5" fill="#475569">• Repeat Serum Creatinine, Lipid Profile, and HbA1c in 3 months.</text>
+  <text x="40" y="652" font-family="Arial, sans-serif" font-size="10.5" fill="#475569">• Follow up after 3 months or SOS if BP &gt; 150/95 or symptoms of hypoglycemia.</text>
+
+  <!-- Doctor Signature Seal -->
+  <path d="M 440 710 C 460 690, 480 730, 500 700 C 510 690, 530 715, 540 705" stroke="#1e3a8a" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <text x="430" y="735" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#0f172a">Dr. Arvind Mehta</text>
+  <text x="430" y="750" font-family="Arial, sans-serif" font-size="9.5" fill="#64748b">MD, DM (Cardiology / Internal Med)</text>
+</svg>

@@ -6,42 +6,45 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
-  Pill,
-  Activity,
+  Tag,
   Calendar,
-  Sparkles,
-  Trash2,
-  ExternalLink,
-  ChevronDown,
-  ChevronUp,
+  Eye,
+  X,
+  Plus,
 } from 'lucide-react';
 
 const API_BASE = '/api';
 
 export default function DocumentUpload({
   visitId,
+  patientId,
   language = 'en',
   onDocumentExtracted,
+  onDocumentUploaded,
   extractedDocs = [],
+  documents = [],
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState('');
   const [error, setError] = useState(null);
-  const [activeDocId, setActiveDocId] = useState(null);
+  const [labelInput, setLabelInput] = useState('');
+  const [previewImage, setPreviewImage] = useState(null);
 
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
 
+  // Merge legacy prop extractedDocs with documents
+  const allDocs = documents.length > 0 ? documents : extractedDocs;
+
   const handleFile = async (file) => {
     if (!file) return;
 
-    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp'];
-    if (!validTypes.includes(file.type) && !file.name.match(/\.(jpg|jpeg|png|webp|gif|bmp)$/i)) {
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp', 'application/pdf'];
+    if (!validTypes.includes(file.type) && !file.name.match(/\.(jpg|jpeg|png|webp|gif|bmp|pdf)$/i)) {
       setError(
         language === 'hi'
-          ? 'कृपया केवल इमेज फ़ाइल (JPG, PNG, WebP) अपलोड करें।'
-          : 'Please upload an image file (JPEG, PNG, WebP).'
+          ? 'कृपया इमेज (JPG, PNG, WebP) या PDF फ़ाइल अपलोड करें।'
+          : 'Please upload an image (JPEG, PNG, WebP) or PDF file.'
       );
       return;
     }
@@ -57,26 +60,16 @@ export default function DocumentUpload({
 
     setError(null);
     setUploading(true);
-    setUploadProgress(
-      language === 'hi'
-        ? 'दस्तावेज़ का विश्लेषण किया जा रहा है...'
-        : 'Analyzing medical document...'
-    );
 
     const formData = new FormData();
-    formData.append('visit_id', visitId || 1);
+    if (visitId) formData.append('visit_id', visitId);
+    if (patientId) formData.append('patient_id', patientId);
+    if (labelInput.trim()) formData.append('label', labelInput.trim());
     formData.append('file', file);
 
-    const token = sessionStorage.getItem('predoc_patient_token') || sessionStorage.getItem('predoc_auth_token');
-    const headers = {};
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
     try {
-      const res = await fetch(`${API_BASE}/documents/extract`, {
+      const res = await fetch(`${API_BASE}/documents/upload`, {
         method: 'POST',
-        headers,
         body: formData,
       });
 
@@ -86,107 +79,58 @@ export default function DocumentUpload({
       }
 
       const data = await res.json();
-      setUploadProgress(language === 'hi' ? 'डेटा निकाला गया' : 'Clinical data extracted');
 
-      if (onDocumentExtracted) {
+      if (onDocumentUploaded) {
+        onDocumentUploaded(data);
+      } else if (onDocumentExtracted) {
         onDocumentExtracted(data);
       }
-      setActiveDocId(data.document_id || Date.now());
+
+      setLabelInput('');
     } catch (err) {
-      console.error('Extraction error:', err);
-      setError(err.message || 'Failed to extract clinical data from image.');
+      console.error('Document upload error:', err);
+      setError(err.message || 'Failed to upload document.');
     } finally {
       setUploading(false);
-      setUploadProgress('');
     }
   };
 
   const handleLoadDemo = () => {
+    // Generate a clean sample prescription svg as base64
+    const sampleSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400" fill="#FFFFFF">
+      <rect width="600" height="400" rx="16" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="2"/>
+      <rect x="24" y="24" width="552" height="70" rx="8" fill="#EAF1FF"/>
+      <text x="44" y="55" font-family="sans-serif" font-size="20" font-weight="bold" fill="#1A2B4C">Apex Medical Clinic - Prescription</text>
+      <text x="44" y="78" font-family="sans-serif" font-size="13" fill="#6B7A99">Dr. S. Sharma, MD (Internal Medicine) • Reg #MC-88492</text>
+      <line x1="24" y1="110" x2="576" y2="110" stroke="#E2E8F4" stroke-width="1.5"/>
+      <text x="44" y="145" font-family="sans-serif" font-size="14" font-weight="bold" fill="#2F6FED">Rx (Active Medications):</text>
+      <text x="44" y="175" font-family="sans-serif" font-size="14" fill="#1A2B4C">1. Tab. Metformin HCl 500mg — 1 tab BD after meals</text>
+      <text x="44" y="205" font-family="sans-serif" font-size="14" fill="#1A2B4C">2. Tab. Telmisartan 40mg — 1 tab OD morning</text>
+      <text x="44" y="235" font-family="sans-serif" font-size="14" fill="#1A2B4C">3. Tab. Atorvastatin 10mg — 1 tab HS bedtime</text>
+      <line x1="24" y1="270" x2="576" y2="270" stroke="#E2E8F4" stroke-width="1.5"/>
+      <text x="44" y="305" font-family="sans-serif" font-size="13" fill="#6B7A99">Clinical Notes: Fasting Blood Sugar 132 mg/dL, Blood Pressure 138/84 mmHg</text>
+      <text x="44" y="330" font-family="sans-serif" font-size="13" fill="#6B7A99">Date: ${new Date().toLocaleDateString()} • Next Review: 3 Months</text>
+    </svg>`;
+    const sampleB64 = `data:image/svg+xml;base64,${btoa(sampleSvg)}`;
+
     const demoDoc = {
+      id: Date.now(),
       document_id: Date.now(),
-      visit_id: visitId || 1,
-      filename: 'Sample_Prescription_Rx.jpg',
+      visit_id: visitId || null,
+      patient_id: patientId || 1,
+      filename: 'Sample_Prescription_Rx.png',
+      mime_type: 'image/svg+xml',
+      label: labelInput.trim() || 'Prescription - Sample Demo',
+      image_base64: sampleB64,
       created_at: new Date().toISOString(),
-      extracted: {
-        drug_names: [
-          {
-            name: 'Metformin HCl',
-            dosage: '500mg',
-            frequency: 'Twice daily after meals',
-            dosage_normalized: {
-              value: 500,
-              unit: 'mg',
-              value_mg: 500,
-              display: '500 mg',
-            },
-          },
-          {
-            name: 'Paracetamol',
-            dosage: '1g',
-            frequency: 'SOS (as needed for fever)',
-            dosage_normalized: {
-              value: 1,
-              unit: 'g',
-              value_mg: 1000,
-              display: '1.0 g (1000 mg)',
-            },
-          },
-          {
-            name: 'Amlodipine',
-            dosage: '5mg',
-            frequency: 'Once daily morning',
-            dosage_normalized: {
-              value: 5,
-              unit: 'mg',
-              value_mg: 5,
-              display: '5 mg',
-            },
-          },
-        ],
-        diagnoses: [
-          'Type 2 Diabetes Mellitus',
-          'Primary Hypertension',
-          'Viral Upper Respiratory Infection',
-        ],
-        dates: [
-          {
-            label: 'Prescription date',
-            value: '2024-01-15',
-            timestamp_ms: new Date('2024-01-15').getTime(),
-          },
-          {
-            label: 'Follow-up consultation',
-            value: '2024-04-10',
-            timestamp_ms: new Date('2024-04-10').getTime(),
-          },
-          {
-            label: 'Recent lab review',
-            value: '2024-08-22',
-            timestamp_ms: new Date('2024-08-22').getTime(),
-          },
-        ],
-        measurements: [
-          {
-            type: 'Blood Pressure',
-            raw: '135/88 mmHg',
-            systolic: 135,
-            diastolic: 88,
-            unit: 'mmHg',
-          },
-          {
-            type: 'Heart Rate',
-            raw: '78 bpm',
-            value: 78,
-            unit: 'bpm',
-          },
-        ],
-      },
     };
 
-    if (onDocumentExtracted) {
+    if (onDocumentUploaded) {
+      onDocumentUploaded(demoDoc);
+    } else if (onDocumentExtracted) {
       onDocumentExtracted(demoDoc);
     }
-    setActiveDocId(demoDoc.document_id);
+    setLabelInput('');
     setError(null);
   };
 
@@ -219,8 +163,8 @@ export default function DocumentUpload({
           </h3>
           <p className="text-xs text-[#6B7A99] mt-0.5">
             {language === 'hi'
-              ? 'पुराने पर्चे या रिपोर्ट की फ़ोटो लें या अपलोड करें।'
-              : 'Photograph or upload past prescriptions & lab reports for automatic clinical extraction.'}
+              ? 'पुराने पर्चे या रिपोर्ट की फ़ोटो लें या अपलोड करें। डॉक्टर इन्हें सीधे समीक्षा करेंगे।'
+              : 'Upload past prescriptions, lab reports, or discharge summaries to store on patient profile.'}
           </p>
         </div>
 
@@ -235,11 +179,27 @@ export default function DocumentUpload({
         </button>
       </div>
 
+      {/* Optional Label / Tag Input */}
+      <div className="flex items-center gap-2 p-3 rounded-2xl bg-[#F6F9FF] border border-[#E2E8F4]">
+        <Tag className="w-4 h-4 text-[#2F6FED] flex-shrink-0" />
+        <input
+          type="text"
+          placeholder={
+            language === 'hi'
+              ? 'वैकल्पिक लेबल/टैग जोड़ें (उदा. "पर्चा - फरवरी 2026", "रक्त रिपोर्ट")'
+              : 'Add optional label / tag (e.g. "Prescription - Feb 2026", "Lab report")'
+          }
+          value={labelInput}
+          onChange={(e) => setLabelInput(e.target.value)}
+          className="flex-1 bg-transparent text-xs text-[#1A2B4C] placeholder-[#6B7A99] focus:outline-none"
+        />
+      </div>
+
       <input
         type="file"
         ref={fileInputRef}
         onChange={(e) => handleFile(e.target.files?.[0])}
-        accept="image/*"
+        accept="image/*,.pdf"
         className="hidden"
       />
       <input
@@ -265,7 +225,9 @@ export default function DocumentUpload({
         {uploading ? (
           <div className="py-6 flex flex-col items-center justify-center gap-3">
             <Loader2 className="w-8 h-8 text-[#2F6FED] animate-spin" />
-            <p className="text-sm font-bold text-[#1A2B4C]">{uploadProgress}</p>
+            <p className="text-sm font-bold text-[#1A2B4C]">
+              {language === 'hi' ? 'दस्तावेज़ सहेजा जा रहा है...' : 'Saving document to patient profile...'}
+            </p>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center gap-3">
@@ -275,10 +237,10 @@ export default function DocumentUpload({
 
             <div>
               <p className="text-sm font-bold text-[#1A2B4C]">
-                {language === 'hi' ? 'फ़ाइल यहाँ खींचें या चुनें' : 'Drag prescription photo here or browse'}
+                {language === 'hi' ? 'फ़ाइल यहाँ खींचें या चुनें' : 'Drag document photo/file here or browse'}
               </p>
               <p className="text-xs text-[#6B7A99] mt-0.5">
-                JPEG, PNG, WebP up to 20MB
+                JPEG, PNG, WebP, PDF up to 20MB
               </p>
             </div>
 
@@ -315,160 +277,77 @@ export default function DocumentUpload({
         </div>
       )}
 
-      {/* Extracted Document Cards */}
-      {extractedDocs.length > 0 && (
+      {/* Stored Document Cards List */}
+      {allDocs.length > 0 && (
         <div className="space-y-3 pt-2">
           <div className="flex items-center justify-between text-xs text-[#6B7A99]">
             <span className="font-bold text-[#1A2B4C]">
-              {language === 'hi' ? 'निकाले गए दस्तावेज़' : 'Extracted documents'} ({extractedDocs.length})
+              {language === 'hi' ? 'सहेजे गए दस्तावेज़' : 'Patient Documents on File'} ({allDocs.length})
             </span>
           </div>
 
-          <div className="space-y-3">
-            {extractedDocs.map((doc, i) => {
-              const docId = doc.document_id || doc.id || i;
-              const isExpanded = activeDocId === docId || extractedDocs.length === 1;
-              const extracted = doc.extracted || doc.extracted_json || {};
-              const drugs = extracted.drug_names || [];
-              const diagnoses = extracted.diagnoses || [];
-              const dates = extracted.dates || [];
-              const measurements = extracted.measurements || [];
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {allDocs.map((doc, i) => {
+              const docId = doc.id || doc.document_id || i;
+              const uploadDate = doc.created_at
+                ? new Date(doc.created_at).toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })
+                : 'Recent';
 
               return (
                 <div
                   key={docId}
-                  className="rounded-2xl border border-[#E2E8F4] bg-white shadow-soft overflow-hidden"
+                  className="p-4 rounded-2xl border border-[#E2E8F4] bg-white shadow-soft flex items-start justify-between gap-3 hover:border-[#2F6FED]/50 transition"
                 >
-                  <button
-                    onClick={() => setActiveDocId(isExpanded ? null : docId)}
-                    className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-[#F6F9FF] transition"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center">
-                        <FileText className="w-4 h-4" />
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    {doc.image_base64 ? (
+                      <div
+                        onClick={() => setPreviewImage(doc.image_base64)}
+                        className="w-12 h-12 rounded-xl border border-[#E2E8F4] bg-[#F6F9FF] overflow-hidden flex-shrink-0 cursor-pointer hover:opacity-80 transition flex items-center justify-center"
+                        title="Click to view full image"
+                      >
+                        <img
+                          src={doc.image_base64}
+                          alt={doc.filename}
+                          className="w-full h-full object-cover"
+                        />
                       </div>
-                      <div>
-                        <span className="text-xs font-bold text-[#1A2B4C]">
-                          {doc.filename || `Prescription #${i + 1}`}
-                        </span>
-                        <div className="text-[11px] text-[#6B7A99] mt-0.5">
-                          {drugs.length} drugs • {diagnoses.length} diagnoses • {dates.length} dates
-                        </div>
+                    ) : (
+                      <div className="w-12 h-12 rounded-xl bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center flex-shrink-0">
+                        <FileText className="w-6 h-6" />
                       </div>
-                    </div>
+                    )}
 
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-[#EAF7EE] text-[#2FAE60] font-semibold">
-                        Extracted
+                    <div className="min-w-0 flex-1">
+                      <span className="text-xs font-bold text-[#1A2B4C] block truncate">
+                        {doc.filename || `Document #${i + 1}`}
                       </span>
-                      {isExpanded ? (
-                        <ChevronUp className="w-4 h-4 text-[#6B7A99]" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4 text-[#6B7A99]" />
+
+                      {doc.label && (
+                        <span className="inline-block px-2 py-0.5 mt-1 rounded-md text-[10px] font-semibold bg-[#EAF1FF] text-[#2F6FED] truncate max-w-full">
+                          🏷️ {doc.label}
+                        </span>
                       )}
+
+                      <div className="flex items-center gap-2 text-[11px] text-[#6B7A99] mt-1">
+                        <Calendar className="w-3 h-3" />
+                        <span>{uploadDate}</span>
+                      </div>
                     </div>
-                  </button>
+                  </div>
 
-                  {isExpanded && (
-                    <div className="p-5 pt-2 border-t border-[#E2E8F4] space-y-4 text-xs bg-[#F6F9FF]">
-                      {drugs.length > 0 && (
-                        <div>
-                          <span className="text-xs font-bold text-[#1A2B4C] block mb-2">
-                            Extracted medications
-                          </span>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                            {drugs.map((drug, dIdx) => (
-                              <div
-                                key={dIdx}
-                                className="p-3 rounded-xl border border-[#E2E8F4] bg-white shadow-sm flex items-start justify-between"
-                              >
-                                <div>
-                                  <p className="font-bold text-[#1A2B4C]">{drug.name}</p>
-                                  {drug.dosage && (
-                                    <p className="text-[#6B7A99] text-[11px] mt-0.5">
-                                      Dosage: <span className="font-mono font-medium text-[#1A2B4C]">{drug.dosage}</span>
-                                    </p>
-                                  )}
-                                  {drug.frequency && (
-                                    <p className="text-[#6B7A99] text-[10px]">{drug.frequency}</p>
-                                  )}
-                                </div>
-                                {drug.dosage_normalized && (
-                                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#EAF1FF] text-[#2F6FED]">
-                                    {drug.dosage_normalized.display || `${drug.dosage_normalized.value_mg} mg`}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {diagnoses.length > 0 && (
-                        <div>
-                          <span className="text-xs font-bold text-[#1A2B4C] block mb-2">
-                            Diagnoses
-                          </span>
-                          <div className="flex flex-wrap gap-2">
-                            {diagnoses.map((diag, dIdx) => {
-                              const label = typeof diag === 'string' ? diag : diag.name || diag.diagnosis;
-                              return (
-                                <span
-                                  key={dIdx}
-                                  className="px-3 py-1 rounded-full bg-white border border-[#E2E8F4] text-[#1A2B4C] text-xs font-medium shadow-sm"
-                                >
-                                  {label}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {(dates.length > 0 || measurements.length > 0) && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-[#E2E8F4]">
-                          {dates.length > 0 && (
-                            <div>
-                              <span className="text-xs font-bold text-[#1A2B4C] block mb-1.5">
-                                Extracted dates
-                              </span>
-                              <div className="space-y-1.5">
-                                {dates.map((d, dIdx) => (
-                                  <div
-                                    key={dIdx}
-                                    className="flex items-center justify-between text-[11px] bg-white px-3 py-1.5 rounded-lg border border-[#E2E8F4]"
-                                  >
-                                    <span className="text-[#6B7A99]">{d.label || 'Date'}:</span>
-                                    <span className="font-mono font-semibold text-[#1A2B4C]">{d.value}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {measurements.length > 0 && (
-                            <div>
-                              <span className="text-xs font-bold text-[#1A2B4C] block mb-1.5">
-                                Measurements
-                              </span>
-                              <div className="space-y-1.5">
-                                {measurements.map((m, mIdx) => (
-                                  <div
-                                    key={mIdx}
-                                    className="flex items-center justify-between text-[11px] bg-white px-3 py-1.5 rounded-lg border border-[#E2E8F4]"
-                                  >
-                                    <span className="text-[#6B7A99]">{m.type || 'Measurement'}:</span>
-                                    <span className="font-mono font-semibold text-[#2F6FED]">
-                                      {m.raw || (m.unit ? `${m.value} ${m.unit}` : '-')}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                  {doc.image_base64 && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewImage(doc.image_base64)}
+                      className="p-2 rounded-full border border-[#E2E8F4] bg-[#F6F9FF] hover:bg-[#EAF1FF] text-[#2F6FED] transition flex-shrink-0"
+                      title="View full document"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
                   )}
                 </div>
               );
@@ -476,6 +355,32 @@ export default function DocumentUpload({
           </div>
         </div>
       )}
+
+      {/* Lightbox Modal */}
+      {previewImage && (
+        <div
+          onClick={() => setPreviewImage(null)}
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative max-w-3xl max-h-[90vh] bg-white p-3 rounded-3xl border border-[#E2E8F4] shadow-2xl"
+          >
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute top-4 right-4 p-2 rounded-full bg-white border border-[#E2E8F4] text-[#1A2B4C] shadow-sm hover:bg-[#F6F9FF]"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <img
+              src={previewImage}
+              alt="Medical document preview"
+              className="max-h-[85vh] object-contain mx-auto rounded-2xl"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

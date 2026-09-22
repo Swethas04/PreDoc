@@ -35,6 +35,9 @@ import {
   ChevronDown,
   ChevronUp,
   ListTree,
+  Download,
+  ExternalLink,
+  File,
 } from 'lucide-react';
 import MedicalTimeline from './MedicalTimeline';
 
@@ -143,7 +146,89 @@ export default function CaseDraftPage({
   const [sidePanelTab, setSidePanelTab] = useState('all');
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
   const [expandedImage, setExpandedImage] = useState(null);
+  const [previewDoc, setPreviewDoc] = useState(null);
+  const [imgLoading, setImgLoading] = useState(true);
+  const [imgError, setImgError] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState({});
+
+  const handleOpenPreview = (doc) => {
+    setPreviewDoc(doc);
+    setImgLoading(true);
+    setImgError(false);
+  };
+
+  const getFileTypeCategory = (doc) => {
+    if (!doc) return 'unknown';
+    const mime = (doc.mime_type || '').toLowerCase();
+    const name = (doc.filename || '').toLowerCase();
+
+    if (mime.includes('pdf') || name.endsWith('.pdf')) {
+      return 'pdf';
+    }
+    if (
+      mime.startsWith('image/') ||
+      /\.(png|jpe?g|webp|svg|gif|bmp|tiff|heic)$/i.test(name)
+    ) {
+      return 'image';
+    }
+    if (
+      mime.includes('word') ||
+      mime.includes('officedocument.wordprocessingml') ||
+      /\.(docx?|rtf|odt)$/i.test(name)
+    ) {
+      return 'word';
+    }
+    if (
+      mime.includes('spreadsheet') ||
+      mime.includes('excel') ||
+      mime.includes('csv') ||
+      /\.(xlsx?|csv)$/i.test(name)
+    ) {
+      return 'spreadsheet';
+    }
+    if (mime.startsWith('text/') || /\.(txt|md|json)$/i.test(name)) {
+      return 'text';
+    }
+    return 'other';
+  };
+
+  const isPdfDoc = (doc) => getFileTypeCategory(doc) === 'pdf';
+  const isImageDoc = (doc) => getFileTypeCategory(doc) === 'image';
+
+  const getFileBadgeInfo = (doc) => {
+    const cat = getFileTypeCategory(doc);
+    if (cat === 'pdf') {
+      return { badge: 'PDF', bg: 'bg-[#FEECEE]', text: 'text-[#E5484D]', border: 'border-[#E5484D]/30' };
+    }
+    if (cat === 'image') {
+      const ext = (doc.filename || '').split('.').pop()?.toUpperCase();
+      return { badge: ext && ext.length <= 4 ? ext : 'IMG', bg: 'bg-[#EAF1FF]', text: 'text-[#2F6FED]', border: 'border-[#2F6FED]/30' };
+    }
+    if (cat === 'word') {
+      return { badge: 'DOC', bg: 'bg-[#F3E8FF]', text: 'text-[#7C3AED]', border: 'border-[#7C3AED]/30' };
+    }
+    if (cat === 'spreadsheet') {
+      return { badge: 'SHEET', bg: 'bg-[#ECFDF5]', text: 'text-[#059669]', border: 'border-[#059669]/30' };
+    }
+    if (cat === 'text') {
+      return { badge: 'TXT', bg: 'bg-[#F1F5F9]', text: 'text-[#475569]', border: 'border-[#CBD5E1]' };
+    }
+    return { badge: 'FILE', bg: 'bg-[#F1F5F9]', text: 'text-[#64748B]', border: 'border-[#CBD5E1]' };
+  };
+
+  const getDocumentRawUrl = (doc) => {
+    if (!doc) return '';
+    if (doc.file_url) return doc.file_url;
+    if (doc.patient_profile_id) return `/api/patients/documents/${doc.id}/raw`;
+    return `/api/documents/${doc.id}/raw`;
+  };
+
+  const getDocumentDownloadUrl = (doc) => {
+    if (!doc) return '';
+    if (doc.download_url) return doc.download_url;
+    if (doc.patient_profile_id) return `/api/patients/documents/${doc.id}/download`;
+    return `/api/documents/${doc.id}/download`;
+  };
 
   const handleToggleCollapse = (key) => {
     setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -492,13 +577,13 @@ export default function CaseDraftPage({
             )}
 
             <div className="w-14 h-14 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center font-bold text-lg flex-shrink-0">
-              {caseData?.patient?.name ? caseData.patient.name.charAt(0).toUpperCase() : 'P'}
+              P
             </div>
 
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-[#1A2B4C] tracking-tight">
-                  {caseData?.patient?.name || (loading ? 'Loading patient chart...' : 'Patient Consultation')}
+                  Patient Case Review
                 </h1>
                 <span className="px-3 py-1 rounded-full text-xs font-mono bg-[#EAF1FF] text-[#2F6FED]">
                   Visit #{visitId}
@@ -544,12 +629,6 @@ export default function CaseDraftPage({
                 <span>Interview turns: <strong className="text-[#2F6FED] font-semibold">{turns.length}</strong></span>
                 <span>•</span>
                 <span>Uploaded documents: <strong className="text-[#2F6FED] font-semibold">{documents.length}</strong></span>
-                {caseData?.approved_by && (
-                  <>
-                    <span>•</span>
-                    <span className="text-[#2FAE60] font-medium">Approved by: {caseData.approved_by}</span>
-                  </>
-                )}
               </div>
             </div>
           </div>
@@ -564,8 +643,8 @@ export default function CaseDraftPage({
                 className="bg-[#F6F9FF] text-xs font-medium text-[#1A2B4C] py-2 px-4 rounded-full border border-[#E2E8F4] hover:border-[#2F6FED] focus:outline-none cursor-pointer"
               >
                 {allVisits.map((v) => (
-                  <option key={v.visit_id} value={v.visit_id}>
-                    Visit #{v.visit_id} - {v.patient_name} {v.is_approved ? '✓ Approved' : '(Pending)'}
+                  <option key={v.visit_id || v.id} value={v.visit_id || v.id}>
+                    Visit #{v.visit_id || v.id} {v.is_approved ? '✓ (Approved)' : '(Pending)'}
                   </option>
                 ))}
               </select>
@@ -893,39 +972,75 @@ export default function CaseDraftPage({
                 {sidePanelTab === 'images' && (
                   <div className="space-y-4">
                     {documents.length === 0 ? (
-                      <p className="text-[#6B7A99] text-xs italic">No prescription images uploaded.</p>
+                      <p className="text-[#6B7A99] text-xs italic">No uploaded documents or prescriptions on file.</p>
                     ) : (
-                      documents.map((doc) => (
-                        <div key={doc.id} className="p-4 rounded-2xl border border-[#E2E8F4] bg-[#F6F9FF] space-y-2.5">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-[#1A2B4C] text-xs">{doc.filename}</span>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#EAF1FF] text-[#2F6FED] font-mono">Doc #{doc.id}</span>
-                          </div>
+                      documents.map((doc) => {
+                        const badgeInfo = getFileBadgeInfo(doc);
+                        const isPdf = isPdfDoc(doc);
+                        const isImg = isImageDoc(doc);
+                        const downloadUrl = getDocumentDownloadUrl(doc);
 
-                          {doc.image_base64 ? (
-                            <div className="relative border border-[#E2E8F4] bg-white rounded-xl overflow-hidden">
-                              <img
-                                src={doc.image_base64}
-                                alt={doc.filename}
-                                className="w-full max-h-52 object-contain mx-auto"
-                              />
+                        return (
+                          <div
+                            key={doc.id}
+                            ref={(el) => (docRefs.current[doc.id] = el)}
+                            onClick={() => handleOpenPreview(doc)}
+                            className="p-4 rounded-2xl border border-[#E2E8F4] bg-[#F8FAFC] hover:bg-white hover:border-[#2F6FED]/50 transition cursor-pointer space-y-3 shadow-xs"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold uppercase tracking-wider ${badgeInfo.bg} ${badgeInfo.text} border ${badgeInfo.border}`}>
+                                  {badgeInfo.badge}
+                                </span>
+                                <span className="font-bold text-[#1A2B4C] text-xs truncate" title={doc.filename}>
+                                  {doc.label || doc.filename}
+                                </span>
+                              </div>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-white text-[#6B7A99] font-mono border border-[#E2E8F4] flex-shrink-0">
+                                Doc #{doc.id}
+                              </span>
+                            </div>
+
+                            {isImg && (doc.image_base64 || doc.file_url) && (
+                              <div className="relative border border-[#E2E8F4] bg-white rounded-xl overflow-hidden max-h-40 flex items-center justify-center">
+                                <img
+                                  src={getDocumentRawUrl(doc) || doc.image_base64}
+                                  alt={doc.filename}
+                                  className="w-full h-36 object-contain mx-auto bg-slate-50"
+                                  loading="lazy"
+                                />
+                              </div>
+                            )}
+
+                            <DocumentDetailSnippet doc={doc} />
+
+                            <div className="flex items-center justify-between pt-2 border-t border-[#E2E8F4] gap-2">
                               <button
-                                onClick={() => setExpandedImage(doc.image_base64)}
-                                className="absolute bottom-2 right-2 px-2.5 py-1 rounded-full bg-white text-[#1A2B4C] border border-[#E2E8F4] text-[10px] font-bold shadow-sm"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenPreview(doc);
+                                }}
+                                className="flex items-center gap-1 text-[11px] font-bold text-[#2F6FED] hover:underline"
                               >
-                                View full
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>{isPdf ? 'Open PDF' : isImg ? 'Preview' : 'View File'}</span>
                               </button>
-                            </div>
-                          ) : (
-                            <div className="p-4 bg-white border border-[#E2E8F4] rounded-xl text-center text-[#6B7A99]">
-                              <ImageIcon className="w-6 h-6 mx-auto mb-1 opacity-50" />
-                              <p className="text-[11px]">Preview not available</p>
-                            </div>
-                          )}
 
-                          <DocumentDetailSnippet doc={doc} />
-                        </div>
-                      ))
+                              <a
+                                href={downloadUrl}
+                                download={doc.filename}
+                                onClick={(e) => e.stopPropagation()}
+                                className="flex items-center gap-1 px-3 py-1 rounded-full bg-white border border-[#CBD5E1] hover:border-[#2F6FED] text-[#1A2B4C] hover:text-[#2F6FED] text-[11px] font-semibold transition shadow-xs"
+                                title={`Download ${doc.filename}`}
+                              >
+                                <Download className="w-3.5 h-3.5 text-[#2F6FED]" />
+                                <span>Download</span>
+                              </a>
+                            </div>
+                          </div>
+                        );
+                      })
                     )}
                   </div>
                 )}
@@ -1008,22 +1123,63 @@ export default function CaseDraftPage({
                       ) : (
                         <div className="space-y-2">
                           {documents.map((doc) => {
+                            const badgeInfo = getFileBadgeInfo(doc);
+                            const isPdf = isPdfDoc(doc);
+                            const isImg = isImageDoc(doc);
+                            const downloadUrl = getDocumentDownloadUrl(doc);
                             const isHighlighted = activeSource?.type === 'document' && Number(activeSource.id) === doc.id;
+
                             return (
                               <div
                                 key={doc.id}
                                 ref={(el) => (docRefs.current[doc.id] = el)}
-                                className={`p-3 rounded-xl border text-xs transition ${
+                                onClick={() => handleOpenPreview(doc)}
+                                className={`p-3.5 rounded-2xl border text-xs transition cursor-pointer space-y-2.5 ${
                                   isHighlighted
-                                    ? 'border-[#2F6FED] bg-[#EAF1FF]'
-                                    : 'border-[#E2E8F4] bg-white'
+                                    ? 'border-[#2F6FED] bg-[#EAF1FF] ring-2 ring-[#2F6FED]/20'
+                                    : 'border-[#E2E8F4] bg-white hover:border-[#2F6FED]/50 shadow-xs'
                                 }`}
                               >
-                                <div className="flex items-center justify-between text-[10px] text-[#6B7A99] mb-1">
-                                  <span className="font-bold text-[#1A2B4C]">{doc.filename}</span>
-                                  <span className="font-mono">Doc #{doc.id}</span>
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold uppercase tracking-wider ${badgeInfo.bg} ${badgeInfo.text} border ${badgeInfo.border}`}>
+                                      {badgeInfo.badge}
+                                    </span>
+                                    <span className="font-bold text-[#1A2B4C] truncate" title={doc.filename}>
+                                      {doc.label || doc.filename}
+                                    </span>
+                                  </div>
+                                  <span className="font-mono text-[10px] text-[#6B7A99] px-2 py-0.5 rounded-full bg-[#F6F9FF] border border-[#E2E8F4]">
+                                    Doc #{doc.id}
+                                  </span>
                                 </div>
+
                                 <DocumentDetailSnippet doc={doc} />
+
+                                <div className="flex items-center justify-between pt-2 border-t border-[#E2E8F4]/80 gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleOpenPreview(doc);
+                                    }}
+                                    className="flex items-center gap-1 text-[11px] font-bold text-[#2F6FED] hover:underline"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                    <span>{isPdf ? 'Open PDF' : isImg ? 'Preview' : 'View File'}</span>
+                                  </button>
+
+                                  <a
+                                    href={downloadUrl}
+                                    download={doc.filename}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white border border-[#CBD5E1] hover:border-[#2F6FED] text-[#1A2B4C] hover:text-[#2F6FED] text-[11px] font-semibold transition shadow-xs"
+                                    title={`Download ${doc.filename}`}
+                                  >
+                                    <Download className="w-3 h-3 text-[#2F6FED]" />
+                                    <span>Download</span>
+                                  </a>
+                                </div>
                               </div>
                             );
                           })}
@@ -1038,27 +1194,171 @@ export default function CaseDraftPage({
         )}
       </div>
 
-      {/* Fullscreen Image Lightbox Modal */}
-      {expandedImage && (
-        <div
-          onClick={() => setExpandedImage(null)}
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm"
-        >
-          <div className="relative max-w-4xl max-h-[90vh] bg-white p-3 rounded-3xl border border-[#E2E8F4] shadow-2xl">
-            <button
-              onClick={() => setExpandedImage(null)}
-              className="absolute top-4 right-4 p-2 rounded-full bg-white border border-[#E2E8F4] text-[#1A2B4C] shadow-sm hover:bg-[#F6F9FF]"
+      {/* Full Document Viewer & Download Modal */}
+      {previewDoc && (() => {
+        const badgeInfo = getFileBadgeInfo(previewDoc);
+        const isPdf = isPdfDoc(previewDoc);
+        const isImg = isImageDoc(previewDoc);
+        const rawUrl = getDocumentRawUrl(previewDoc);
+        const downloadUrl = getDocumentDownloadUrl(previewDoc);
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Medical document preview"
+            onClick={() => setPreviewDoc(null)}
+            className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3 sm:p-6 backdrop-blur-sm animate-fade-in"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-full max-w-5xl max-h-[94vh] bg-white rounded-3xl border border-[#E2E8F4] shadow-2xl flex flex-col overflow-hidden"
             >
-              <X className="w-4 h-4" />
-            </button>
-            <img
-              src={expandedImage}
-              alt="Expanded medical record"
-              className="max-h-[85vh] object-contain mx-auto rounded-2xl"
-            />
+              {/* Modal Top Bar */}
+              <div className="px-6 py-4 border-b border-[#E2E8F4] bg-[#F8FAFC] flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className={`px-2.5 py-1 rounded-md text-xs font-mono font-bold uppercase ${badgeInfo.bg} ${badgeInfo.text} border ${badgeInfo.border}`}>
+                    {badgeInfo.badge}
+                  </span>
+                  <div className="truncate">
+                    <h3 className="text-sm sm:text-base font-bold text-[#1A2B4C] truncate">
+                      {previewDoc.label || previewDoc.filename}
+                    </h3>
+                    <span className="text-xs text-[#64748B] font-mono block truncate">
+                      {previewDoc.filename} • Doc #{previewDoc.id}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <a
+                    href={rawUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-[#E2E8F4] bg-white text-xs font-semibold text-[#2F6FED] hover:bg-[#EAF1FF] transition shadow-xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open in new tab</span>
+                  </a>
+
+                  <a
+                    href={downloadUrl}
+                    download={previewDoc.filename}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-[#2F6FED] hover:bg-[#255BC7] text-white text-xs font-bold transition shadow-xs"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => setPreviewDoc(null)}
+                    className="p-2 rounded-full hover:bg-[#E2E8F4] text-[#64748B] transition"
+                    title="Close viewer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Content Frame */}
+              <div className="p-4 sm:p-6 overflow-auto flex-1 bg-[#F1F5F9]/50 flex items-center justify-center min-h-[60vh]">
+                {isPdf ? (
+                  <div className="w-full h-[78vh] flex flex-col rounded-2xl border border-[#CBD5E1] overflow-hidden bg-white shadow-inner">
+                    <iframe
+                      src={rawUrl}
+                      title={previewDoc.filename}
+                      className="w-full h-full border-0"
+                    />
+                  </div>
+                ) : isImg ? (
+                  <div className="max-h-[78vh] overflow-auto flex items-center justify-center w-full p-2 relative">
+                    {imgLoading && !imgError && (
+                      <div className="flex flex-col items-center justify-center p-12 space-y-3">
+                        <div className="w-8 h-8 border-3 border-[#2F6FED] border-t-transparent rounded-full animate-spin"></div>
+                        <p className="text-xs text-[#64748B] font-medium">Loading high-resolution document preview...</p>
+                      </div>
+                    )}
+                    {imgError ? (
+                      <div className="p-8 text-center bg-white rounded-2xl border border-[#E2E8F4] shadow-sm max-w-md">
+                        <AlertCircle className="w-10 h-10 text-[#E5484D] mx-auto mb-2" />
+                        <h4 className="text-sm font-bold text-[#1A2B4C] mb-1">Couldn't load inline preview</h4>
+                        <p className="text-xs text-[#64748B] mb-4">
+                          The image format or connection prevented inline rendering. You can still download or open it in a new tab.
+                        </p>
+                        <div className="flex items-center justify-center gap-2">
+                          <a
+                            href={rawUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-1.5 rounded-full border border-[#E2E8F4] text-xs font-semibold text-[#2F6FED] hover:bg-[#EAF1FF]"
+                          >
+                            Open in new tab
+                          </a>
+                          <a
+                            href={downloadUrl}
+                            download={previewDoc.filename}
+                            className="px-4 py-1.5 rounded-full bg-[#2F6FED] text-white text-xs font-bold hover:bg-[#255BC7]"
+                          >
+                            Download
+                          </a>
+                        </div>
+                      </div>
+                    ) : (
+                      <img
+                        src={rawUrl || previewDoc.image_base64}
+                        alt={previewDoc.filename}
+                        onLoad={() => setImgLoading(false)}
+                        onError={() => {
+                          setImgLoading(false);
+                          setImgError(true);
+                        }}
+                        className={`max-h-[76vh] max-w-full object-contain mx-auto rounded-2xl border border-[#CBD5E1] bg-white shadow-md transition-opacity duration-200 ${
+                          imgLoading ? 'opacity-0 absolute' : 'opacity-100'
+                        }`}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center bg-white rounded-3xl border border-[#E2E8F4] shadow-lg max-w-md w-full animate-fade-in">
+                    <div className="w-16 h-16 rounded-2xl bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center mx-auto mb-4 border border-[#2F6FED]/20 shadow-xs">
+                      {badgeInfo.badge === 'DOC' ? (
+                        <FileText className="w-8 h-8" />
+                      ) : badgeInfo.badge === 'SHEET' ? (
+                        <ClipboardList className="w-8 h-8" />
+                      ) : (
+                        <File className="w-8 h-8" />
+                      )}
+                    </div>
+                    <span className={`px-2.5 py-1 rounded-md text-[11px] font-mono font-bold uppercase tracking-wider ${badgeInfo.bg} ${badgeInfo.text} border ${badgeInfo.border} inline-block mb-2`}>
+                      {badgeInfo.badge} DOCUMENT
+                    </span>
+                    <h4 className="text-base font-bold text-[#1A2B4C] mb-1 truncate px-2" title={previewDoc.filename}>
+                      {previewDoc.label || previewDoc.filename}
+                    </h4>
+                    <p className="text-xs text-[#64748B] font-mono mb-4 truncate px-4">
+                      {previewDoc.filename} • Doc #{previewDoc.id}
+                    </p>
+                    <p className="text-xs text-[#64748B] mb-6 leading-relaxed">
+                      This file format cannot be rendered inline directly in the browser. Click below to download and view in Microsoft Word or your local application.
+                    </p>
+                    <div className="flex items-center justify-center gap-3">
+                      <a
+                        href={downloadUrl}
+                        download={previewDoc.filename}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#2F6FED] text-white text-xs font-bold hover:bg-[#255BC7] transition shadow-sm"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>Download {previewDoc.filename}</span>
+                      </a>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

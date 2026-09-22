@@ -25,3 +25,11 @@ def override_get_db():
 # Ensure tables exist
 Base.metadata.create_all(bind=test_engine)
 app.dependency_overrides[get_db] = override_get_db
+
+from app.models.user import User
+from app.services.auth import get_current_staff, require_doctor
+
+_test_doctor = User(id=1, username="test_doctor", role="doctor", password_hash="hash")
+
+app.dependency_overrides[get_current_staff] = lambda: _test_doctor
+app.dependency_overrides[require_doctor] = lambda: _test_doctor

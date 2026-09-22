@@ -278,25 +278,66 @@ def get_case_context(id: int, db: Session = Depends(get_db), current_user: User 
         for t in turns
     ]
 
-    # Fetch documents (including base64 images for doctor view)
-    documents = (
+    # Fetch documents across DocumentRecord and PatientDocument
+    doc_filter = (DocumentRecord.visit_id == id)
+    if visit.patient_id:
+        doc_filter = (DocumentRecord.patient_id == visit.patient_id) | (DocumentRecord.visit_id == id)
+
+    doc_records = (
         db.query(DocumentRecord)
-        .filter(DocumentRecord.visit_id == id)
-        .order_by(DocumentRecord.created_at.asc())
+        .filter(doc_filter)
+        .order_by(DocumentRecord.created_at.desc(), DocumentRecord.id.desc())
         .all()
     )
-    docs_list = [
-        {
-            "id": d.id,
-            "filename": d.filename,
-            "mime_type": d.mime_type,
-            "extracted_json": d.extracted_json,
-            "raw_text": d.raw_text,
-            "image_base64": d.image_base64,
-            "created_at": d.created_at.isoformat() if d.created_at else None,
-        }
-        for d in documents
-    ]
+
+    patient_docs = []
+    if getattr(visit, "patient_profile_id", None):
+        patient_docs = (
+            db.query(PatientDocument)
+            .filter(
+                (PatientDocument.patient_profile_id == visit.patient_profile_id) |
+                (PatientDocument.visit_id == id)
+            )
+            .order_by(PatientDocument.uploaded_at.desc(), PatientDocument.id.desc())
+            .all()
+        )
+
+    docs_list = []
+    seen_ids = set()
+
+    for d in doc_records:
+        key = f"doc_{d.id}_{d.filename}"
+        if key not in seen_ids:
+            seen_ids.add(key)
+            docs_list.append({
+                "id": d.id,
+                "filename": d.filename,
+                "mime_type": d.mime_type,
+                "label": d.label,
+                "extracted_json": d.extracted_json,
+                "raw_text": d.raw_text,
+                "image_base64": d.image_base64,
+                "file_url": d.file_url or f"/api/documents/{d.id}/raw",
+                "download_url": f"/api/documents/{d.id}/download",
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            })
+
+    for p in patient_docs:
+        key = f"pdoc_{p.id}_{p.filename}"
+        if key not in seen_ids:
+            seen_ids.add(key)
+            docs_list.append({
+                "id": p.id,
+                "patient_profile_id": p.patient_profile_id,
+                "filename": p.filename,
+                "mime_type": p.mime_type,
+                "label": p.label,
+                "image_base64": p.image_base64,
+                "uploaded_by": p.uploaded_by,
+                "file_url": p.file_url or f"/api/documents/{p.id}/raw",
+                "download_url": f"/api/documents/{p.id}/download",
+                "created_at": p.uploaded_at.isoformat() if p.uploaded_at else None,
+            })
 
     # Fetch draft
     draft_record = db.query(CaseDraft).filter(CaseDraft.visit_id == id).first()
@@ -456,6 +497,22 @@ def approve_case_draft(
     draft.is_approved = True
     draft.approved_at = now
     draft.approved_by = doctor_name
+
+    # Create consultation record for patient profile if associated
+    if getattr(visit, "patient_profile_id", None):
+        from app.models.consultation import Consultation
+        notes_val = getattr(body, "notes", None) if body else None
+        consultation = Consultation(
+            patient_profile_id=visit.patient_profile_id,
+            doctor_id=getattr(current_user, "id", None),
+            doctor_name=doctor_name,
+            visit_id=visit.id,
+            consultation_date=now,
+            consultation_time=now.strftime("%I:%M %p"),
+            notes=notes_val or f"Case draft reviewed and approved as final by {doctor_name}.",
+            case_draft_id=draft.id,
+        )
+        db.add(consultation)
 
     db.commit()
     db.refresh(visit)

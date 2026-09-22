@@ -126,6 +126,51 @@ def init_db():
                 conn.execute(text("ALTER TABLE patients ADD COLUMN pin_hash VARCHAR(128)"))
             except Exception:
                 pass
+            # 11. visits.patient_profile_id
+            try:
+                conn.execute(text("ALTER TABLE visits ADD COLUMN patient_profile_id INTEGER"))
+            except Exception:
+                pass
+            # 12. users.email
+            try:
+                conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
+            except Exception:
+                pass
+            # 13. users.name
+            try:
+                conn.execute(text("ALTER TABLE users ADD COLUMN name VARCHAR(255)"))
+            except Exception:
+                pass
+            # 14. users.created_at
+            try:
+                conn.execute(text("ALTER TABLE users ADD COLUMN created_at TIMESTAMP"))
+            except Exception:
+                pass
+            # 15. document_records.patient_id
+            try:
+                conn.execute(text("ALTER TABLE document_records ADD COLUMN patient_id INTEGER"))
+            except Exception:
+                pass
+            # 16. document_records.label
+            try:
+                conn.execute(text("ALTER TABLE document_records ADD COLUMN label VARCHAR(255)"))
+            except Exception:
+                pass
+            # 17. document_records.file_url
+            try:
+                conn.execute(text("ALTER TABLE document_records ADD COLUMN file_url VARCHAR(1024)"))
+            except Exception:
+                pass
+            # 18. document_records.file_path
+            try:
+                conn.execute(text("ALTER TABLE document_records ADD COLUMN file_path VARCHAR(1024)"))
+            except Exception:
+                pass
+            # 19. patient_documents.file_path
+            try:
+                conn.execute(text("ALTER TABLE patient_documents ADD COLUMN file_path VARCHAR(1024)"))
+            except Exception:
+                pass
 
         logger.info("Database tables and column migrations initialized successfully.")
     except Exception as e:
