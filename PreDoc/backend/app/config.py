@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     CORS_ORIGINS: Union[str, List[str]] = "http://localhost:5173,http://127.0.0.1:5173"
     GEMINI_API_KEY: str = ""
 
+    # JWT Authentication
+    JWT_SECRET_KEY: str = "predoc-hackathon-jwt-secret-2026-change-in-prod"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 480
+
     @field_validator("CORS_ORIGINS", mode="after")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:

@@ -31,15 +31,84 @@ import {
   Unlock,
   Maximize2,
   Image as ImageIcon,
+  Calendar,
+  ChevronDown,
+  ChevronUp,
+  ListTree,
 } from 'lucide-react';
+import MedicalTimeline from './MedicalTimeline';
 
 const API_BASE = '/api';
+
+// ─── 8 Clinical Sections Configuration ───────────────────────────────────────
+const DRAFT_SECTIONS = [
+  {
+    key: 'chief_complaint',
+    title: '1. Chief Complaint',
+    subtitle: "Patient's primary reported concern",
+    icon: Stethoscope,
+    fallbackNegative: 'No primary complaint reported.',
+  },
+  {
+    key: 'hpi',
+    title: '2. History of Present Illness (HPI)',
+    subtitle: 'Duration, progression, and associated symptoms from interview',
+    icon: Activity,
+    fallbackNegative: 'No HPI duration or progression details reported.',
+  },
+  {
+    key: 'medical_history',
+    title: '3. Medical History',
+    subtitle: 'Past medical conditions, chronic illnesses, and surgical history',
+    icon: HeartPulse,
+    fallbackNegative: 'No significant past medical history reported.',
+  },
+  {
+    key: 'medications',
+    title: '4. Current Medications',
+    subtitle: 'Current medications reported in interview and extracted from uploaded documents',
+    icon: Pill,
+    fallbackNegative: 'Not currently taking any medications.',
+  },
+  {
+    key: 'allergies',
+    title: '5. Allergies',
+    subtitle: 'Known drug, food, and environmental allergies',
+    icon: AlertCircle,
+    fallbackNegative: 'No known drug or food allergies reported (NKDA).',
+  },
+  {
+    key: 'previous_investigations',
+    title: '6. Previous Investigations',
+    subtitle: 'Extracted laboratory test values, diagnostics, and vitals from records',
+    icon: ClipboardList,
+    fallbackNegative: 'No previous diagnostic investigations or lab reports uploaded.',
+  },
+  {
+    key: 'timeline',
+    title: '7. Medical Timeline',
+    subtitle: 'Chronological prescription and diagnostic history',
+    icon: Calendar,
+    fallbackNegative: 'Single consultation encounter; no prior documented events.',
+    isTimeline: true,
+  },
+  {
+    key: 'red_flags',
+    title: '8. Red Flags & Urgent Alerts',
+    subtitle: 'High-risk triage flags, critical symptoms, and urgent clinical recommendations',
+    icon: ShieldAlert,
+    fallbackNegative: 'No red flag symptoms identified.',
+    isRedFlag: true,
+  },
+];
 
 export default function CaseDraftPage({
   visitId: propVisitId,
   onBack,
   onNavigateVisit,
   onBackToDoctorQueue,
+  authToken,
+  onAuthError,
 }) {
   const [visitId, setVisitId] = useState(() => {
     if (propVisitId) return Number(propVisitId);
@@ -57,6 +126,12 @@ export default function CaseDraftPage({
   const [successMessage, setSuccessMessage] = useState(null);
   const [copied, setCopied] = useState(false);
 
+  // Helper for auth headers
+  const getAuthHeaders = useCallback((extra = {}) => ({
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...extra,
+  }), [authToken]);
+
   // Inline editing state
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(null);
@@ -68,6 +143,42 @@ export default function CaseDraftPage({
   const [sidePanelTab, setSidePanelTab] = useState('all');
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
   const [expandedImage, setExpandedImage] = useState(null);
+  const [collapsedSections, setCollapsedSections] = useState({});
+
+  const handleToggleCollapse = (key) => {
+    setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleExpandAll = () => {
+    setCollapsedSections({});
+  };
+
+  const handleCollapseAll = () => {
+    const all = {};
+    DRAFT_SECTIONS.forEach((s) => {
+      all[s.key] = true;
+    });
+    setCollapsedSections(all);
+  };
+
+  const getSectionItems = (draftObj, sectionKey) => {
+    if (!draftObj) return [];
+    if (Array.isArray(draftObj[sectionKey])) return draftObj[sectionKey];
+    // Backward compatibility fallback if old SOAP structure:
+    if (sectionKey === 'chief_complaint' && draftObj.subjective) {
+      return draftObj.subjective.slice(0, 1);
+    }
+    if (sectionKey === 'hpi' && draftObj.subjective) {
+      return draftObj.subjective.slice(1);
+    }
+    if (sectionKey === 'medications' && draftObj.plan) {
+      return draftObj.plan.filter((p) => p.fact && /mg|tablet|daily|dose|med/i.test(p.fact));
+    }
+    if (sectionKey === 'previous_investigations' && draftObj.objective) {
+      return draftObj.objective;
+    }
+    return [];
+  };
 
   const turnRefs = useRef({});
   const docRefs = useRef({});
@@ -81,7 +192,13 @@ export default function CaseDraftPage({
 
   const fetchVisitsList = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/visits`);
+      const res = await fetch(`${API_BASE}/visits`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.status === 401 && onAuthError) {
+        onAuthError();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setAllVisits(data);
@@ -89,13 +206,19 @@ export default function CaseDraftPage({
     } catch (err) {
       console.warn('Could not load visits list:', err);
     }
-  }, []);
+  }, [getAuthHeaders, onAuthError]);
 
   const fetchCaseContext = useCallback(async (vid) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/visits/${vid}/case`);
+      const res = await fetch(`${API_BASE}/visits/${vid}/case`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.status === 401 && onAuthError) {
+        onAuthError();
+        return;
+      }
       if (!res.ok) {
         if (res.status === 404) {
           throw new Error(`Visit #${vid} not found.`);
@@ -110,9 +233,13 @@ export default function CaseDraftPage({
         setEditContent(JSON.parse(JSON.stringify(data.draft.content)));
       }
 
-      if (data.draft?.content?.subjective?.length > 0) {
+      if (data.draft?.content?.chief_complaint?.length > 0) {
+        const first = data.draft.content.chief_complaint[0];
+        setSelectedFactKey('chief_complaint-0');
+        setActiveSource(first.source);
+      } else if (data.draft?.content?.subjective?.length > 0) {
         const first = data.draft.content.subjective[0];
-        setSelectedFactKey('subjective-0');
+        setSelectedFactKey('chief_complaint-0');
         setActiveSource(first.source);
       }
     } catch (err) {
@@ -120,7 +247,7 @@ export default function CaseDraftPage({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getAuthHeaders, onAuthError]);
 
   useEffect(() => {
     fetchVisitsList();
@@ -143,13 +270,18 @@ export default function CaseDraftPage({
     try {
       const res = await fetch(`${API_BASE}/visits/${visitId}/generate-draft`, {
         method: 'POST',
+        headers: getAuthHeaders(),
       });
+      if (res.status === 401 && onAuthError) {
+        onAuthError();
+        return;
+      }
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
         throw new Error(errJson.detail || `Generation failed (HTTP ${res.status})`);
       }
       const draftResult = await res.json();
-      setSuccessMessage('✨ SOAP case draft generated with grounded citations.');
+      setSuccessMessage('✨ 8-section clinical case draft generated with grounded citations.');
       fetchCaseContext(visitId);
     } catch (err) {
       setError(err.message || 'Error generating case draft');
@@ -180,12 +312,16 @@ export default function CaseDraftPage({
     try {
       const res = await fetch(`${API_BASE}/visits/${visitId}/draft`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           content: editContent,
         }),
       });
 
+      if (res.status === 401 && onAuthError) {
+        onAuthError();
+        return;
+      }
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
         throw new Error(errJson.detail || `Save failed (HTTP ${res.status})`);
@@ -209,13 +345,17 @@ export default function CaseDraftPage({
     try {
       const res = await fetch(`${API_BASE}/visits/${visitId}/approve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           doctor_name: 'Dr. Attending Physician',
           final_notes: editContent ? JSON.stringify(editContent) : undefined,
         }),
       });
 
+      if (res.status === 401 && onAuthError) {
+        onAuthError();
+        return;
+      }
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
         throw new Error(errJson.detail || `Approval failed (HTTP ${res.status})`);
@@ -250,23 +390,27 @@ export default function CaseDraftPage({
     const textLines = [
       `PATIENT: ${caseData.patient?.name || 'N/A'} (Age: ${caseData.patient?.age || 'N/A'}, Visit #${visitId})`,
       `STATUS: ${caseData.is_approved ? 'APPROVED FINAL' : 'PROVISIONAL DRAFT'}`,
+      `CONSENT: ${caseData.consent_given ? `Verified (${caseData.consent_timestamp || 'recorded'})` : 'Pending'}`,
       '',
-      '=== SUBJECTIVE (S) ===',
-      ...(c.subjective || []).map((f) => `• ${f.fact}`),
-      '',
-      '=== OBJECTIVE (O) ===',
-      ...(c.objective || []).map((f) => `• ${f.fact}`),
-      '',
-      '=== ASSESSMENT (A) ===',
-      ...(c.assessment || []).map((f) => `• ${f.fact}`),
-      '',
-      '=== PLAN (P) ===',
-      ...(c.plan || []).map((f) => `• ${f.fact}`),
     ];
 
     if (c.clinical_summary) {
-      textLines.splice(3, 0, `SUMMARY: ${c.clinical_summary}`, '');
+      textLines.push(`CLINICAL IMPRESSION: ${c.clinical_summary}`, '');
     }
+
+    DRAFT_SECTIONS.forEach((sec) => {
+      textLines.push(`=== ${sec.title.toUpperCase()} ===`);
+      const items = getSectionItems(c, sec.key);
+      if (items.length > 0) {
+        items.forEach((f) => {
+          const src = f.source ? ` [${f.source.label || `${f.source.type === 'turn' ? 'Transcript' : 'Document'} #${f.source.id}`}]` : '';
+          textLines.push(`• ${f.fact}${src}`);
+        });
+      } else {
+        textLines.push(`• ${sec.fallbackNegative}`);
+      }
+      textLines.push('');
+    });
 
     navigator.clipboard.writeText(textLines.join('\n'));
     setCopied(true);
@@ -369,6 +513,18 @@ export default function CaseDraftPage({
                   <span className="px-3 py-1 rounded-full text-xs font-semibold bg-[#FEF6E9] text-[#F5A623] flex items-center gap-1.5">
                     <AlertCircle className="w-3.5 h-3.5" />
                     Provisional draft
+                  </span>
+                )}
+
+                {caseData?.consent_given ? (
+                  <span className="px-3 py-1 rounded-full text-xs font-semibold bg-[#EAF7EE] text-[#2FAE60] flex items-center gap-1.5 border border-[#2FAE60]/20">
+                    <ShieldCheck className="w-3.5 h-3.5 text-[#2FAE60]" />
+                    Consent verified
+                  </span>
+                ) : (
+                  <span className="px-3 py-1 rounded-full text-xs font-semibold bg-[#FEF6E9] text-[#F5A623] flex items-center gap-1.5 border border-[#F5A623]/20">
+                    <Lock className="w-3.5 h-3.5 text-[#F5A623]" />
+                    Consent pending
                   </span>
                 )}
 
@@ -609,68 +765,39 @@ export default function CaseDraftPage({
             </div>
           )}
 
-          {/* Individual SOAP Section Cards */}
+          {/* Reorganized 8 Clinical Sections + Table of Contents Outline */}
           {draft && (
             <div className="space-y-5">
-              <SOAPCard
-                title="Subjective (S)"
-                subtitle="Patient-reported symptoms, timeline, chief complaint & medical history"
-                icon={Mic}
-                items={draft.subjective || []}
-                sectionKey="subjective"
-                selectedFactKey={selectedFactKey}
-                onSelectFact={handleFactClick}
-                isMatched={isFactMatchedByFilter}
-                isEditing={isEditing}
-                onItemChange={handleItemChange}
-                onAddItem={handleAddItem}
-                onDeleteItem={handleDeleteItem}
+              {/* Collapsible Tree / Outline for direct section jumping */}
+              <DraftTableOfContents
+                sections={DRAFT_SECTIONS}
+                draft={draft}
+                collapsedSections={collapsedSections}
+                onToggleSection={handleToggleCollapse}
+                onExpandAll={handleExpandAll}
+                onCollapseAll={handleCollapseAll}
+                getSectionItems={getSectionItems}
               />
 
-              <SOAPCard
-                title="Objective (O)"
-                subtitle="Prescription records, lab measurements, vitals & documentary evidence"
-                icon={Activity}
-                items={draft.objective || []}
-                sectionKey="objective"
-                selectedFactKey={selectedFactKey}
-                onSelectFact={handleFactClick}
-                isMatched={isFactMatchedByFilter}
-                isEditing={isEditing}
-                onItemChange={handleItemChange}
-                onAddItem={handleAddItem}
-                onDeleteItem={handleDeleteItem}
-              />
-
-              <SOAPCard
-                title="Assessment (A)"
-                subtitle="Clinical impression, differential diagnoses & risk factors"
-                icon={HeartPulse}
-                items={draft.assessment || []}
-                sectionKey="assessment"
-                selectedFactKey={selectedFactKey}
-                onSelectFact={handleFactClick}
-                isMatched={isFactMatchedByFilter}
-                isEditing={isEditing}
-                onItemChange={handleItemChange}
-                onAddItem={handleAddItem}
-                onDeleteItem={handleDeleteItem}
-              />
-
-              <SOAPCard
-                title="Plan (P)"
-                subtitle="Medication reconciliation, diagnostic investigations & follow-up instructions"
-                icon={ClipboardList}
-                items={draft.plan || []}
-                sectionKey="plan"
-                selectedFactKey={selectedFactKey}
-                onSelectFact={handleFactClick}
-                isMatched={isFactMatchedByFilter}
-                isEditing={isEditing}
-                onItemChange={handleItemChange}
-                onAddItem={handleAddItem}
-                onDeleteItem={handleDeleteItem}
-              />
+              {/* 8 Clinical Section Cards */}
+              {DRAFT_SECTIONS.map((sec) => (
+                <ClinicalSectionCard
+                  key={sec.key}
+                  section={sec}
+                  sectionKey={sec.key}
+                  items={getSectionItems(draft, sec.key)}
+                  selectedFactKey={selectedFactKey}
+                  onSelectFact={handleFactClick}
+                  isMatched={isFactMatchedByFilter}
+                  isEditing={isEditing}
+                  onItemChange={handleItemChange}
+                  onAddItem={handleAddItem}
+                  onDeleteItem={handleDeleteItem}
+                  documents={documents}
+                  isCollapsed={!!collapsedSections[sec.key]}
+                  onToggleCollapse={() => handleToggleCollapse(sec.key)}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -936,11 +1063,88 @@ export default function CaseDraftPage({
   );
 }
 
-// ─── Individual SOAP Card Component ───────────────────────────────────────────
-function SOAPCard({
-  title,
-  subtitle,
-  icon: Icon,
+// ─── Collapsible Tree / List Outline Table of Contents ──────────────────────
+function DraftTableOfContents({
+  sections,
+  draft,
+  collapsedSections,
+  onToggleSection,
+  onExpandAll,
+  onCollapseAll,
+  getSectionItems,
+}) {
+  return (
+    <div className="p-4 sm:p-5 rounded-2xl border border-[#E2E8F4] bg-white shadow-soft space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <ListTree className="w-4 h-4 text-[#2F6FED]" />
+          <h4 className="text-xs font-bold text-[#1A2B4C] uppercase tracking-wider">
+            Case Draft Outline (8 Clinical Sections)
+          </h4>
+        </div>
+        <div className="flex items-center gap-2 text-[11px]">
+          <button
+            type="button"
+            onClick={onExpandAll}
+            className="text-[#2F6FED] hover:underline font-semibold"
+          >
+            Expand all
+          </button>
+          <span className="text-[#E2E8F4]">•</span>
+          <button
+            type="button"
+            onClick={onCollapseAll}
+            className="text-[#6B7A99] hover:underline font-semibold"
+          >
+            Collapse all
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {sections.map((sec) => {
+          const items = getSectionItems(draft, sec.key);
+          const isCollapsed = collapsedSections[sec.key];
+          const Icon = sec.icon;
+          const isRed = sec.isRedFlag && items.some((i) => i.fact && !i.fact.toLowerCase().includes('no red flag'));
+
+          return (
+            <a
+              key={sec.key}
+              href={`#section-${sec.key}`}
+              onClick={(e) => {
+                e.preventDefault();
+                const el = document.getElementById(`section-${sec.key}`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              className={`p-2.5 rounded-xl border transition flex items-center justify-between gap-2 text-xs ${
+                isRed
+                  ? 'border-[#E5484D]/40 bg-[#FEECEE] text-[#E5484D] font-bold'
+                  : 'border-[#E2E8F4] bg-[#F6F9FF] hover:bg-[#EAF1FF] hover:border-[#2F6FED]/50 text-[#1A2B4C]'
+              }`}
+            >
+              <div className="flex items-center gap-2 truncate">
+                <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${isRed ? 'text-[#E5484D]' : 'text-[#2F6FED]'}`} />
+                <span className="truncate font-semibold">{sec.title.split('. ')[1]}</span>
+              </div>
+              <span
+                className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold flex-shrink-0 ${
+                  isRed ? 'bg-[#E5484D] text-white' : 'bg-white text-[#6B7A99] border border-[#E2E8F4]'
+                }`}
+              >
+                {items.length}
+              </span>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Individual 8-Section Card Component ─────────────────────────────────────
+function ClinicalSectionCard({
+  section,
   items = [],
   sectionKey,
   selectedFactKey,
@@ -950,46 +1154,93 @@ function SOAPCard({
   onItemChange,
   onAddItem,
   onDeleteItem,
+  documents = [],
+  isCollapsed,
+  onToggleCollapse,
 }) {
+  const { title, subtitle, icon: Icon, fallbackNegative, isTimeline, isRedFlag } = section;
+  const effectiveItems =
+    items.length > 0
+      ? items
+      : fallbackNegative
+      ? [{ fact: fallbackNegative, source: null, isFallback: true }]
+      : [];
+
   return (
-    <div className="rounded-2xl border border-[#E2E8F4] bg-white p-6 shadow-soft space-y-4">
+    <div
+      id={`section-${sectionKey}`}
+      className={`rounded-2xl border transition-all duration-200 bg-white shadow-soft space-y-4 scroll-mt-24 p-6 ${
+        isRedFlag && items.some((i) => i.fact && !i.fact.toLowerCase().includes('no red flag'))
+          ? 'border-[#E5484D]/40 bg-[#FFF9FA]'
+          : 'border-[#E2E8F4]'
+      }`}
+    >
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center">
+        <div
+          className="flex items-center gap-3 cursor-pointer select-none flex-1"
+          onClick={onToggleCollapse}
+        >
+          <div
+            className={`w-9 h-9 rounded-full flex items-center justify-center ${
+              isRedFlag && items.some((i) => i.fact && !i.fact.toLowerCase().includes('no red flag'))
+                ? 'bg-[#FEECEE] text-[#E5484D]'
+                : 'bg-[#EAF1FF] text-[#2F6FED]'
+            }`}
+          >
             <Icon className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-[#1A2B4C]">{title}</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-bold text-[#1A2B4C]">{title}</h3>
+              <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-[#F6F9FF] text-[#6B7A99] border border-[#E2E8F4]">
+                {items.length} {items.length === 1 ? 'item' : 'items'}
+              </span>
+            </div>
             <p className="text-xs text-[#6B7A99]">{subtitle}</p>
           </div>
         </div>
-        {isEditing && (
+
+        <div className="flex items-center gap-2">
+          {isEditing && (
+            <button
+              type="button"
+              onClick={() => onAddItem(sectionKey)}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#EAF1FF] hover:bg-[#2F6FED] text-[#2F6FED] hover:text-white text-xs font-bold transition shadow-sm"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add fact
+            </button>
+          )}
+
           <button
             type="button"
-            onClick={() => onAddItem(sectionKey)}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#EAF1FF] hover:bg-[#2F6FED] text-[#2F6FED] hover:text-white text-xs font-bold transition shadow-sm"
+            onClick={onToggleCollapse}
+            className="p-1.5 rounded-full hover:bg-[#F6F9FF] text-[#6B7A99] transition"
+            title={isCollapsed ? 'Expand section' : 'Collapse section'}
           >
-            <Plus className="w-3.5 h-3.5" /> Add fact
+            {isCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
           </button>
-        )}
+        </div>
       </div>
 
-      {items.length === 0 ? (
-        <p className="text-xs text-[#6B7A99] italic">No items recorded in this section.</p>
-      ) : (
-        <div className="space-y-2.5">
-          {items.map((item, idx) => {
+      {!isCollapsed && (
+        <div className="space-y-2.5 pt-1 animate-fade-in">
+          {effectiveItems.map((item, idx) => {
             const factKey = `${sectionKey}-${idx}`;
             const isSelected = selectedFactKey === factKey;
             const matched = isMatched(item);
+            const isAlertItem = isRedFlag && item.fact && !item.fact.toLowerCase().includes('no red flag');
 
             return (
               <div
                 key={idx}
-                onClick={() => !isEditing && onSelectFact(item, factKey)}
-                className={`p-3.5 rounded-xl border transition cursor-pointer text-xs ${
+                onClick={() => !isEditing && !item.isFallback && onSelectFact(item, factKey)}
+                className={`p-3.5 rounded-xl border transition text-xs ${
+                  isEditing ? 'cursor-default' : item.isFallback ? 'cursor-default' : 'cursor-pointer'
+                } ${
                   isSelected
                     ? 'border-[#2F6FED] bg-[#EAF1FF] ring-2 ring-[#2F6FED]/20'
+                    : isAlertItem
+                    ? 'border-[#E5484D]/40 bg-[#FEECEE] text-[#E5484D]'
                     : matched
                     ? 'border-[#E2E8F4] bg-[#F6F9FF] hover:border-[#2F6FED]/50 hover:bg-white'
                     : 'border-[#E2E8F4] bg-white opacity-40'
@@ -1002,7 +1253,7 @@ function SOAPCard({
                       value={item.fact || ''}
                       onChange={(e) => onItemChange(sectionKey, idx, e.target.value)}
                       className="flex-1 px-3 py-2 rounded-lg bg-white border border-[#E2E8F4] text-xs font-medium text-[#1A2B4C] focus:outline-none focus:border-[#2F6FED]"
-                      placeholder="Enter clinical fact..."
+                      placeholder="Enter clinical detail..."
                     />
                     <button
                       type="button"
@@ -1015,12 +1266,21 @@ function SOAPCard({
                   </div>
                 ) : (
                   <div className="flex items-start justify-between gap-3">
-                    <p className="text-[#1A2B4C] text-xs leading-relaxed font-medium flex-1">
+                    <p
+                      className={`text-xs leading-relaxed font-medium flex-1 ${
+                        isAlertItem
+                          ? 'text-[#E5484D] font-semibold'
+                          : item.isFallback
+                          ? 'text-[#6B7A99] italic'
+                          : 'text-[#1A2B4C]'
+                      }`}
+                    >
                       {item.fact}
                     </p>
                     {item.source && (
-                      <span className="text-[10px] font-mono font-semibold text-[#2F6FED] bg-white px-2.5 py-0.5 rounded-full border border-[#E2E8F4] flex-shrink-0">
-                        {item.source.type === 'turn' ? 'Transcript' : 'Doc'} #{item.source.id}
+                      <span className="text-[10px] font-mono font-semibold text-[#2F6FED] bg-white px-2.5 py-0.5 rounded-full border border-[#E2E8F4] flex-shrink-0 shadow-xs">
+                        {item.source.label ||
+                          `${item.source.type === 'turn' ? 'Transcript' : 'Document'} #${item.source.id}`}
                       </span>
                     )}
                   </div>
@@ -1028,6 +1288,17 @@ function SOAPCard({
               </div>
             );
           })}
+
+          {/* Section 7: Embedded Medical Timeline */}
+          {isTimeline && documents.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-[#E2E8F4] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#1A2B4C]">Chronological Event Timeline</span>
+                <span className="text-[11px] text-[#6B7A99]">{documents.length} records</span>
+              </div>
+              <MedicalTimeline documents={documents} />
+            </div>
+          )}
         </div>
       )}
     </div>

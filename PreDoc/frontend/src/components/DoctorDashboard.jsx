@@ -19,7 +19,7 @@ import {
 
 const API_BASE = '/api';
 
-export default function DoctorDashboard({ onOpenReview, onNavigateIntake }) {
+export default function DoctorDashboard({ onOpenReview, onNavigateIntake, authToken, onAuthError }) {
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -31,7 +31,15 @@ export default function DoctorDashboard({ onOpenReview, onNavigateIntake }) {
     if (!isSilent) setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/visits/doctor-queue`);
+      const headers = {};
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+      const res = await fetch(`${API_BASE}/visits/doctor-queue`, { headers });
+      if (res.status === 401 && onAuthError) {
+        onAuthError();
+        return;
+      }
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       }
@@ -44,7 +52,7 @@ export default function DoctorDashboard({ onOpenReview, onNavigateIntake }) {
     } finally {
       if (!isSilent) setLoading(false);
     }
-  }, []);
+  }, [authToken, onAuthError]);
 
   useEffect(() => {
     fetchQueue();
@@ -90,7 +98,7 @@ export default function DoctorDashboard({ onOpenReview, onNavigateIntake }) {
               </span>
             </div>
             <p className="text-xs sm:text-sm text-[#6B7A99] mt-1">
-              Review provisional SOAP clinical drafts against original interview transcripts and uploaded documents, edit inline, and lock as final.
+              Review provisional 8-section clinical case drafts (Chief Complaint, HPI, Medical History, Medications, Allergies, Investigations, Timeline, Red Flags) against original interview transcripts and uploaded documents, edit inline, and lock as final.
             </p>
           </div>
         </div>
@@ -273,6 +281,18 @@ export default function DoctorDashboard({ onOpenReview, onNavigateIntake }) {
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#FEF6E9] text-[#F5A623]">
                           <Clock className="w-3.5 h-3.5" />
                           Pending review
+                        </span>
+                      )}
+
+                      {item.consent_given ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#EAF7EE] text-[#2FAE60] border border-[#2FAE60]/20">
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          Consent Verified
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#FEF6E9] text-[#F5A623] border border-[#F5A623]/20">
+                          <Lock className="w-3.5 h-3.5" />
+                          Consent Pending
                         </span>
                       )}
 

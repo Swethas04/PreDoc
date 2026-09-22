@@ -25,7 +25,7 @@ import {
 
 const API_BASE = '/api';
 
-export default function TriageDashboard({ onNavigateCase, onNavigateIntake }) {
+export default function TriageDashboard({ onNavigateCase, onNavigateIntake, authToken, onAuthError }) {
   const [urgentVisits, setUrgentVisits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -39,7 +39,15 @@ export default function TriageDashboard({ onNavigateCase, onNavigateIntake }) {
     if (!isSilent) setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/visits/triage`);
+      const headers = {};
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+      const res = await fetch(`${API_BASE}/visits/triage`, { headers });
+      if (res.status === 401 && onAuthError) {
+        onAuthError();
+        return;
+      }
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       }
@@ -52,7 +60,7 @@ export default function TriageDashboard({ onNavigateCase, onNavigateIntake }) {
     } finally {
       if (!isSilent) setLoading(false);
     }
-  }, []);
+  }, [authToken, onAuthError]);
 
   useEffect(() => {
     fetchTriageFeed();
@@ -66,13 +74,21 @@ export default function TriageDashboard({ onNavigateCase, onNavigateIntake }) {
   const handleMarkTriaged = async (visitId) => {
     setActionLoading(visitId);
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
       const res = await fetch(`${API_BASE}/visits/${visitId}/triage`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           status: 'triaged',
         }),
       });
+      if (res.status === 401 && onAuthError) {
+        onAuthError();
+        return;
+      }
       if (res.ok) {
         fetchTriageFeed(true);
       }

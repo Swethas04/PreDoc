@@ -7,11 +7,25 @@ class StartIntakeRequest(BaseModel):
     patient_name: str
     patient_age: Optional[int] = None
     language: Literal["en", "hi"] = "en"
+    consent_given: bool = True
+    consent_timestamp: Optional[datetime] = None
+    patient_code: Optional[str] = None  # for returning patient
+    pin: Optional[str] = None           # for returning patient
+
+
+class ConsentUpdateRequest(BaseModel):
+    consent_given: bool = True
+    consent_timestamp: Optional[datetime] = None
 
 
 class StartIntakeResponse(BaseModel):
     visit_id: int
+    visit_token: Optional[str] = None
     patient_id: int
+    patient_code: Optional[str] = None
+    pin: Optional[str] = None            # returned once for new patients; None for returning
+    is_returning: bool = False
+    patient_token: Optional[str] = None  # JWT for the patient session
     language: str
     first_step: str
     first_question: str
@@ -19,6 +33,8 @@ class StartIntakeResponse(BaseModel):
     message: str
     input_type: str = "options"  # "options", "yesno", "text"
     step_input_types: Optional[dict[str, str]] = None
+    consent_given: bool = True
+    consent_timestamp: Optional[datetime] = None
 
 
 class IntakeTurnRead(BaseModel):

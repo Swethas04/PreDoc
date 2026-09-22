@@ -1,4 +1,6 @@
 import logging
+import uuid
+from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -9,6 +11,7 @@ from app.models.patient import Patient
 from app.models.visit import Visit
 from app.models.intake_turn import IntakeTurn
 from app.schemas.intake import (
+    ConsentUpdateRequest,
     StartIntakeRequest,
     StartIntakeResponse,
     IntakeRespondResponse,
@@ -27,6 +30,15 @@ from app.services.gemini import (
     parse_demographics_from_text,
 )
 from app.services.red_flag_checker import evaluate_red_flags
+from app.services.auth import (
+    generate_patient_code,
+    generate_pin,
+    hash_pin,
+    verify_pin,
+    create_patient_token,
+    get_current_actor,
+    verify_visit_access,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/intake", tags=["Intake"])
@@ -49,29 +61,74 @@ STEP_INPUT_TYPES = {
 def start_intake(body: StartIntakeRequest, db: Session = Depends(get_db)):
     """
     Begin a guided patient intake session.
-    Creates a Patient and Visit record, returns the first clinical question.
+    - New patient: generates unique PD-XXXXXX code + 4-digit PIN, stores bcrypt hash,
+      issues patient JWT, returns code and plaintext PIN once for display.
+    - Returning patient: validates patient_code + PIN, reuses existing patient record,
+      issues fresh patient JWT.
     """
     logger.info(
-        "[Intake Router] Received /api/intake/start request: patient_name='%s', patient_age=%s, language='%s'",
+        "[Intake Router] Received /api/intake/start: patient_name='%s', patient_code='%s', is_returning=%s",
         body.patient_name,
-        body.patient_age,
-        body.language,
+        body.patient_code,
+        bool(body.patient_code and body.pin),
     )
     try:
-        # Create patient (placeholder or initial name/age)
-        patient = Patient(
-            name=body.patient_name or "Patient",
-            age=body.patient_age,
-            language=body.language,
-        )
-        db.add(patient)
-        db.flush()  # get patient.id
+        is_returning = False
+        raw_pin = None
 
-        # Create visit
+        if body.patient_code and body.pin:
+            # Returning patient validation
+            code = body.patient_code.strip().upper()
+            pin = body.pin.strip()
+            patient = db.query(Patient).filter(Patient.patient_code == code).first()
+            if not patient or not patient.pin_hash or not verify_pin(pin, patient.pin_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect Patient ID or PIN. Please try again.",
+                )
+            if body.patient_name and body.patient_name.strip():
+                patient.name = body.patient_name.strip()
+            if body.patient_age is not None:
+                patient.age = body.patient_age
+            if body.language:
+                patient.language = body.language
+            is_returning = True
+            logger.info("[Intake Router] Returning patient authenticated: %s (id=%d)", patient.patient_code, patient.id)
+        else:
+            # New patient: generate unique PD-XXXXXX code and random 4-digit PIN
+            for _ in range(10):
+                code_candidate = generate_patient_code()
+                if not db.query(Patient).filter(Patient.patient_code == code_candidate).first():
+                    break
+            else:
+                code_candidate = generate_patient_code()
+
+            raw_pin = generate_pin()
+            pin_hash = hash_pin(raw_pin)
+            patient = Patient(
+                name=body.patient_name or "Patient",
+                age=body.patient_age,
+                language=body.language,
+                patient_code=code_candidate,
+                pin_hash=pin_hash,
+            )
+            db.add(patient)
+            db.flush()  # get patient.id
+            logger.info("[Intake Router] Created new patient: %s (id=%d)", patient.patient_code, patient.id)
+
+        # Issue patient session token (JWT)
+        patient_token = create_patient_token(patient)
+
+        # Create visit with consent and unique session token
+        c_time = body.consent_timestamp or (datetime.now(timezone.utc) if body.consent_given else None)
+        v_token = str(uuid.uuid4())
         visit = Visit(
             patient_id=patient.id,
             status="intake_in_progress",
             urgency_flag=False,
+            consent_given=body.consent_given,
+            consent_timestamp=c_time,
+            visit_token=v_token,
         )
         db.add(visit)
         db.flush()  # get visit.id
@@ -96,15 +153,21 @@ def start_intake(body: StartIntakeRequest, db: Session = Depends(get_db)):
         db.commit()
 
         logger.info(
-            "[Intake Router] Successfully started intake: patient_id=%d, visit_id=%d, first_step='%s'",
+            "[Intake Router] Started intake: patient_id=%d, code=%s, visit_id=%d, is_returning=%s",
             patient.id,
+            patient.patient_code,
             visit.id,
-            first_step,
+            is_returning,
         )
 
         return StartIntakeResponse(
             visit_id=visit.id,
+            visit_token=visit.visit_token,
             patient_id=patient.id,
+            patient_code=patient.patient_code,
+            pin=raw_pin if not is_returning else None,
+            is_returning=is_returning,
+            patient_token=patient_token,
             language=body.language,
             first_step=first_step,
             first_question=first_question,
@@ -112,7 +175,12 @@ def start_intake(body: StartIntakeRequest, db: Session = Depends(get_db)):
             message="Intake session started successfully.",
             input_type=STEP_INPUT_TYPES.get(first_step, "options"),
             step_input_types=STEP_INPUT_TYPES,
+            consent_given=visit.consent_given,
+            consent_timestamp=visit.consent_timestamp,
         )
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error("[Intake Router] Failed to start intake session: %s", e, exc_info=True)
@@ -123,10 +191,41 @@ def start_intake(body: StartIntakeRequest, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# POST /api/intake/consent/{visit_id}
+# ---------------------------------------------------------------------------
+@router.post("/consent/{visit_id}")
+def update_visit_consent(
+    visit_id: int,
+    body: ConsentUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: Optional[dict] = Depends(get_current_actor),
+):
+    """Update consent status and timestamp for a specific visit."""
+    visit = db.query(Visit).filter(Visit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=404, detail=f"Visit {visit_id} not found")
+    verify_visit_access(visit, actor)
+    visit.consent_given = body.consent_given
+    visit.consent_timestamp = body.consent_timestamp or datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "visit_id": visit.id,
+        "consent_given": visit.consent_given,
+        "consent_timestamp": visit.consent_timestamp.isoformat() if visit.consent_timestamp else None,
+        "message": "Consent recorded successfully",
+    }
+
+
+# ---------------------------------------------------------------------------
 # PATCH /api/intake/patient/{visit_id}
 # ---------------------------------------------------------------------------
 @router.patch("/patient/{visit_id}")
-def update_patient_demographics(visit_id: int, body: UpdatePatientRequest, db: Session = Depends(get_db)):
+def update_patient_demographics(
+    visit_id: int,
+    body: UpdatePatientRequest,
+    db: Session = Depends(get_db),
+    actor: Optional[dict] = Depends(get_current_actor),
+):
     """
     Save or update captured patient demographics (name, age, language) for a visit.
     Updates the database Patient record so all screens (Header, Doctor Dashboard, Case Review) reflect the change.
@@ -134,6 +233,7 @@ def update_patient_demographics(visit_id: int, body: UpdatePatientRequest, db: S
     visit = db.query(Visit).filter(Visit.id == visit_id).first()
     if not visit:
         raise HTTPException(status_code=404, detail=f"Visit {visit_id} not found")
+    verify_visit_access(visit, actor)
 
     patient = visit.patient
     if not patient:
@@ -229,6 +329,7 @@ async def respond_intake(
     client_transcript: Optional[str] = Form(None),
     transcript: Optional[str] = Form(None),
     db: Session = Depends(get_db),
+    actor: Optional[dict] = Depends(get_current_actor),
 ):
     """
     Accept either a voice recording (audio) or pre-built transcript text (tap mode).
@@ -250,6 +351,7 @@ async def respond_intake(
     visit = db.query(Visit).filter(Visit.id == visit_id).first()
     if not visit:
         raise HTTPException(status_code=404, detail=f"Visit {visit_id} not found")
+    verify_visit_access(visit, actor)
 
     # --- Transcription ---
     if transcript_text is not None:
@@ -415,11 +517,16 @@ async def respond_intake(
 # GET /api/intake/turns/{visit_id}
 # ---------------------------------------------------------------------------
 @router.get("/turns/{visit_id}", response_model=IntakeTurnsResponse)
-def get_intake_turns(visit_id: int, db: Session = Depends(get_db)):
+def get_intake_turns(
+    visit_id: int,
+    db: Session = Depends(get_db),
+    actor: Optional[dict] = Depends(get_current_actor),
+):
     """Return all stored intake turns for a given visit."""
     visit = db.query(Visit).filter(Visit.id == visit_id).first()
     if not visit:
         raise HTTPException(status_code=404, detail=f"Visit {visit_id} not found")
+    verify_visit_access(visit, actor)
 
     turns = (
         db.query(IntakeTurn)

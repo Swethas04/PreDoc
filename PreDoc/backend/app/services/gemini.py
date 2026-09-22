@@ -18,6 +18,7 @@ from google import genai
 from google.genai import types
 
 from app.config import settings
+from app.services.red_flag_checker import evaluate_red_flags
 
 logger = logging.getLogger(__name__)
 
@@ -884,14 +885,15 @@ def extract_medical_document(image_bytes: bytes, mime_type: str = "image/jpeg") 
 
 
 # ---------------------------------------------------------------------------
-# SOAP Case Draft Generation
+# 8-Section Case Draft Generation
 # ---------------------------------------------------------------------------
 
 SOAP_PROMPT_TEMPLATE = """You are a senior clinical documentation and pre-consultation triage specialist.
-Synthesize the provided patient intake interview transcript and extracted medical documents for this visit into an accurate, highly specific, evidence-grounded SOAP case draft for the attending physician.
+Synthesize the provided patient intake interview transcript and extracted medical documents for this visit into an accurate, highly specific, evidence-grounded 8-section clinical case draft for the attending physician.
 
 CRITICAL DIRECTIVE:
-The generated case draft must be strictly accurate to the actual patient data provided. Do NOT produce generic, safe-sounding medical boilerplate or repetitive templates. Do NOT speculate or diagnose. Ground every single claim directly in the provided evidence.
+The generated case draft must be strictly accurate to the actual patient data provided. Do NOT produce generic medical boilerplate or repetitive templates. Do NOT speculate or diagnose. Ground every single claim directly in the provided evidence.
+If a section has no data, state that explicitly (e.g. "No known allergies reported", "No current medications reported or documented", "No previous laboratory or diagnostic investigations uploaded") rather than leaving it blank or fabricating content.
 
 PATIENT INFORMATION:
 - Name: {patient_name}
@@ -904,123 +906,85 @@ INTAKE INTERVIEW TURNS (Verbatim conversation):
 EXTRACTED MEDICAL DOCUMENTS (OCR & clinical data):
 {formatted_documents}
 
-MANDATORY CLINICAL RULES (BY SECTION):
+MANDATORY 8 CLINICAL SECTIONS & MAPPING RULES:
 
-1. SUBJECTIVE (S):
-- Pull the patient's actual reported symptoms, duration, and severity VERBATIM or near-verbatim from the transcript with full specifics intact.
-- FORBIDDEN: Do NOT paraphrase in a way that drops specifics (e.g. do NOT write "patient reports headache" when the patient reported "headache for 2-3 days, moderate to severe").
-- Extract distinct, specific items for:
-  * Chief Complaint: exact reported primary concern(s).
-  * Duration & Onset: exact reported timeframe (e.g., "started 2–3 days ago", "over a month").
-  * Associated Symptoms: all reported associated symptoms (or explicitly "No other associated symptoms reported").
-  * Past Medical History: reported pre-existing conditions (or explicitly "No significant past medical history reported").
-  * Current Medications: active medications reported (or explicitly "Not currently taking any medications").
-  * Allergies: exact reported drug, food, or environmental allergies and reactions (or explicitly "No known drug or food allergies (NKDA)").
-- If any category was not addressed or information is missing, state explicitly: "Insufficient information provided for [category]".
+1. chief_complaint:
+- Patient's primary reported concern(s) from the intake transcript.
+- Verbatim or near-verbatim specifics intact. If none: "No primary chief complaint reported".
 
-2. OBJECTIVE (O):
-- ONLY include data that ACTUALLY EXISTS in the provided medical documents or explicitly recorded vitals/measurements.
-- If medical documents are uploaded with lab values, vitals, or prescriptions, extract the exact numerical values, units, and document names.
-- If NO prior documents, lab reports, or vitals were uploaded for this visit, output EXACTLY ONE objective item:
-  "No prior medical documents or lab reports uploaded for this visit."
-  with category "Clinical Documentation" and source pointing to Turn ID 1.
-- STRICTLY FORBIDDEN: Do NOT fabricate placeholder vitals (e.g., "BP 120/80 mmHg", "Pulse 72 bpm", "afebrile"), normal ranges, or hypothetical physical exam observations.
+2. hpi (History of Present Illness):
+- Duration, progression, onset, and associated symptoms from the transcript.
+- If none: "No symptom duration or progression details reported".
 
-3. ASSESSMENT (A):
-- Base this STRICTLY and ONLY on what was reported by the patient and in documents.
-- List the specific symptom constellation, duration, associated factors, and any red-flag findings or pertinent negatives mentioned.
-- STRICTLY FORBIDDEN: Do NOT suggest a medical diagnosis or speculate on likely conditions (e.g., do NOT write "Likely acute viral pharyngitis", "Differential: migraine vs tension headache"). You are creating a pre-consultation intake draft, NOT diagnosing.
-- STRICTLY FORBIDDEN: Do NOT use generic boilerplate like "requires targeted clinical examination", "clinical baseline confirmation", or "patient presents with symptoms requiring evaluation".
-- Accurately summarize the clinical picture as reported, for example:
-  * "Reported acute symptom complex: [exact symptoms e.g. fever, headache] with reported duration of [exact duration e.g. 2–3 days]."
-  * "Associated factors & pertinent negatives: [specific associated symptoms e.g. headache; pertinent negatives: no chest pain or shortness of breath reported]."
-  * "Underlying risk & allergy profile: [past history e.g. Hypertension, or none; allergies e.g. Penicillin, Dust (mild rash)]."
-- If information is insufficient to evaluate a clinical aspect, state explicitly: "Insufficient information provided for full assessment of [specific factor]".
+3. medical_history:
+- Past medical conditions, surgeries, and chronic illnesses mentioned.
+- If none: "No significant past medical or surgical history reported".
 
-4. PLAN (P):
-- Suggest ONLY process-level clinical workflow next steps appropriate for a pre-consultation draft.
-- Every plan item MUST be relevant to this specific patient's reported complaint, NOT a fixed generic template repeated across patients.
-- Tailor next steps directly to what was reported, for example:
-  * "Physician to conduct targeted physical examination of [specific reported symptom e.g. auscultation for cough / throat exam for fever and sore throat]."
-  * "Review baseline triage vitals on arrival (temperature, heart rate, blood pressure, SpO2) to assess reported [specific symptom e.g. fever]."
-  * "Physician to verify reported allergy profile ([specific allergy e.g. Penicillin, Dust]) prior to administering or prescribing medications."
-  * "Reassess in follow-up if [specific reported symptom] persists beyond [specific duration + expected clinical timeframe] or worsens."
-  * "Advise patient to seek emergency triage immediately if red-flag symptoms relevant to [complaint] occur."
-- STRICTLY FORBIDDEN: Do NOT prescribe specific medications or dosages.
-- STRICTLY FORBIDDEN: Do NOT use fixed generic boilerplate templates.
+4. medications:
+- Current medications reported by the patient in the interview + any active prescription drugs extracted from uploaded documents.
+- If none: "No current medications reported or documented".
 
-5. SOURCE LINKING:
-- Every field across all 4 sections (subjective, objective, assessment, plan) MUST contain a "source" object linking to the exact turn_id (type: "turn") from INTAKE INTERVIEW TURNS or document_id (type: "document") from EXTRACTED MEDICAL DOCUMENTS.
-- Format:
+5. allergies:
+- Exact drug, food, or environmental allergies and reactions reported in the allergies intake step.
+- If none: "No known allergies reported (NKDA)".
+
+6. previous_investigations:
+- Extracted laboratory test results, diagnostic reports, vitals, and measurements from uploaded medical documents.
+- If none: "No previous laboratory or diagnostic investigations uploaded".
+
+7. timeline:
+- Chronological document timeline entries from uploaded prescriptions/reports.
+- Each entry must include fact, date, title, category ("medication" | "diagnosis" | "measurement"), and source.
+- If no documents uploaded: exactly one entry with fact "No prior medical documents on file for timeline generation".
+
+8. red_flags:
+- Any urgent red flags, severity indicators, or critical symptoms triggered during intake.
+- If none: "No acute red-flag symptoms detected".
+
+SOURCE LINKING RULES:
+- Every item across all 8 sections MUST contain a "source" object linking to the exact turn_id (type: "turn") or document_id (type: "document").
+- The label field MUST be strictly formatted as:
+  "Transcript #<ID>"  (e.g., "Transcript #1")
+  or
+  "Document #<ID>"    (e.g., "Document #2")
+- Example:
   {{
-    "type": "turn",
-    "id": <exact numeric ID>,
-    "label": "Transcript: <Step Name>",
-    "quote": "<exact verbatim quote from the transcript turn or document>"
+    "fact": "Severe throbbing headache and mild dizziness for 4 days",
+    "source": {{
+      "type": "turn",
+      "id": 1,
+      "label": "Transcript #1",
+      "quote": "I have severe throbbing headache and mild dizziness for the past 4 days."
+    }}
   }}
-  or for document:
-  {{
-    "type": "document",
-    "id": <exact numeric ID>,
-    "label": "Document: <Filename>",
-    "quote": "<exact quote or extracted data snippet from document>"
-  }}
-
-6. FORBIDDEN GENERIC FILLER LANGUAGE:
-- Never use generic filler language such as "requires targeted clinical examination", "clinical baseline confirmation", "provide symptom monitoring guidelines and schedule follow-up as clinically indicated", or "clinical baseline confirmation".
-- If information is missing or unclear, explicitly write: "Insufficient information provided for [item]".
 
 OUTPUT FORMAT:
-Return ONLY a valid, parseable JSON object adhering strictly to this schema:
+Return ONLY a valid, parseable JSON object with these 8 keys + clinical_summary:
 {{
-  "clinical_summary": "A concise 2-3 sentence executive clinical summary citing the patient's exact reported symptoms, duration, and medical/allergy history.",
-  "subjective": [
-    {{
-      "fact": "Specific patient-reported fact with exact duration, severity, and details intact",
-      "category": "Chief Complaint | History of Present Illness | Associated Symptoms | Past Medical History | Current Medications | Allergies",
-      "source": {{
-        "type": "turn",
-        "id": <turn_id>,
-        "label": "Transcript: <Step Name>",
-        "quote": "<verbatim quote from patient transcript>"
-      }}
-    }}
+  "clinical_summary": "A concise 2-3 sentence executive clinical summary citing the patient's reported symptoms, duration, and medical/allergy profile.",
+  "chief_complaint": [
+    {{ "fact": "...", "source": {{ "type": "turn", "id": 1, "label": "Transcript #1", "quote": "..." }} }}
   ],
-  "objective": [
-    {{
-      "fact": "Exact document finding or 'No prior medical documents or lab reports uploaded for this visit.'",
-      "category": "Vital Signs & Labs | Documented Prescriptions | Documented Diagnoses | Clinical Documentation",
-      "source": {{
-        "type": "document" or "turn",
-        "id": <doc_id or turn_id>,
-        "label": "Document: <Filename>" or "Transcript: <Step Name>",
-        "quote": "<exact data quote>"
-      }}
-    }}
+  "hpi": [
+    {{ "fact": "...", "source": {{ "type": "turn", "id": 2, "label": "Transcript #2", "quote": "..." }} }}
   ],
-  "assessment": [
-    {{
-      "fact": "Summarized reported clinical picture with exact symptoms and duration (NO diagnoses, NO boilerplate)",
-      "category": "Reported Symptom Complex | Clinical Risk Profile | Pertinent Negatives",
-      "source": {{
-        "type": "turn" or "document",
-        "id": <turn_id or doc_id>,
-        "label": "Transcript: <Step Name>" or "Document: <Filename>",
-        "quote": "<key grounded observation quote>"
-      }}
-    }}
+  "medical_history": [
+    {{ "fact": "...", "source": {{ "type": "turn", "id": 4, "label": "Transcript #4", "quote": "..." }} }}
   ],
-  "plan": [
-    {{
-      "fact": "Process-level next step tailored specifically to this complaint (NO drug prescriptions, NO fixed template)",
-      "category": "Physician Clinical Examination | Triage & Vitals Acquisition | Allergy & Medication Safety | Patient Warning Signs & Follow-up",
-      "source": {{
-        "type": "turn" or "document",
-        "id": <turn_id or doc_id>,
-        "label": "Transcript: <Step Name>" or "Document: <Filename>",
-        "quote": "<key grounding reason>"
-      }}
-    }}
+  "medications": [
+    {{ "fact": "...", "source": {{ "type": "turn" or "document", "id": 5, "label": "Transcript #5" or "Document #1", "quote": "..." }} }}
+  ],
+  "allergies": [
+    {{ "fact": "...", "source": {{ "type": "turn", "id": 6, "label": "Transcript #6", "quote": "..." }} }}
+  ],
+  "previous_investigations": [
+    {{ "fact": "...", "source": {{ "type": "document", "id": 1, "label": "Document #1", "quote": "..." }} }}
+  ],
+  "timeline": [
+    {{ "fact": "...", "date": "...", "title": "...", "category": "medication|diagnosis|measurement", "source": {{ "type": "document", "id": 1, "label": "Document #1", "quote": "..." }} }}
+  ],
+  "red_flags": [
+    {{ "fact": "...", "severity": "urgent|normal", "department": "Emergency|General", "source": {{ "type": "turn", "id": 1, "label": "Transcript #1", "quote": "..." }} }}
   ]
 }}
 """
@@ -1032,254 +996,384 @@ def _generate_fallback_soap(
     language: str,
     turns: list,
     documents: list,
+    visit: Any = None,
 ) -> Dict[str, Any]:
     """
-    Deterministically synthesizes a grounded SOAP case draft from actual visit turns
+    Deterministically synthesizes a grounded 8-section case draft from actual visit turns
     and documents when GEMINI_API_KEY is not configured or in fallback scenarios.
-    Adheres strictly to the same 6 non-generic clinical rules as the Gemini prompt.
+    Ensures every section has an explicit no-data statement if absent and source-linked tags.
     """
-    subjective_items = []
-    objective_items = []
-    assessment_items = []
-    plan_items = []
-
     turn_by_step = {t.step: t for t in turns}
     primary_turn_id = turns[0].id if turns else 1
     primary_doc_id = documents[0].id if documents else None
 
-    # Step-to-category mapping for Subjective
-    step_info = [
-        ("chief_complaint", "Chief Complaint", "Transcript: Chief Complaint"),
-        ("duration", "History of Present Illness", "Transcript: Duration"),
-        ("associated_symptoms", "Associated Symptoms", "Transcript: Associated Symptoms"),
-        ("past_history", "Past Medical History", "Transcript: Past Medical History"),
-        ("medications", "Current Medications", "Transcript: Current Medications"),
-        ("allergies", "Allergies", "Transcript: Allergies"),
-    ]
+    # 1. Chief Complaint
+    cc_t = turn_by_step.get("chief_complaint")
+    chief_complaint_items = []
+    if cc_t and cc_t.transcript and cc_t.transcript.strip() and cc_t.transcript.strip() != "[inaudible]":
+        cc_text = cc_t.transcript.strip()
+        chief_complaint_items.append({
+            "fact": cc_text,
+            "category": "Chief Complaint",
+            "source": {
+                "type": "turn",
+                "id": cc_t.id,
+                "label": f"Transcript #{cc_t.id}",
+                "quote": cc_text[:200],
+            },
+        })
+    else:
+        chief_complaint_items.append({
+            "fact": "No primary chief complaint reported",
+            "category": "Chief Complaint",
+            "source": {
+                "type": "turn",
+                "id": primary_turn_id,
+                "label": f"Transcript #{primary_turn_id}",
+                "quote": "No chief complaint recorded in intake interview.",
+            },
+        })
 
-    # Extract Subjective verbatim facts
-    for step_key, cat, label in step_info:
-        t = turn_by_step.get(step_key)
-        if t and t.transcript and t.transcript.strip() and t.transcript.strip() != "[inaudible]":
-            text = t.transcript.strip()
-            subjective_items.append({
-                "fact": text,
-                "category": cat,
+    # 2. HPI (History of Present Illness)
+    dur_t = turn_by_step.get("duration")
+    assoc_t = turn_by_step.get("associated_symptoms")
+    hpi_items = []
+    if dur_t and dur_t.transcript and dur_t.transcript.strip() and dur_t.transcript.strip() != "[inaudible]":
+        dur_text = dur_t.transcript.strip()
+        hpi_items.append({
+            "fact": f"Duration and onset: {dur_text}",
+            "category": "Duration & Onset",
+            "source": {
+                "type": "turn",
+                "id": dur_t.id,
+                "label": f"Transcript #{dur_t.id}",
+                "quote": dur_text[:200],
+            },
+        })
+    if assoc_t and assoc_t.transcript and assoc_t.transcript.strip() and assoc_t.transcript.strip() != "[inaudible]":
+        assoc_text = assoc_t.transcript.strip()
+        hpi_items.append({
+            "fact": f"Associated symptoms: {assoc_text}",
+            "category": "Associated Symptoms",
+            "source": {
+                "type": "turn",
+                "id": assoc_t.id,
+                "label": f"Transcript #{assoc_t.id}",
+                "quote": assoc_text[:200],
+            },
+        })
+    if not hpi_items:
+        hpi_items.append({
+            "fact": "No symptom duration or progression details reported",
+            "category": "HPI",
+            "source": {
+                "type": "turn",
+                "id": primary_turn_id,
+                "label": f"Transcript #{primary_turn_id}",
+                "quote": "No HPI information recorded in intake.",
+            },
+        })
+
+    # 3. Medical History
+    ph_t = turn_by_step.get("past_history")
+    medical_history_items = []
+    if ph_t and ph_t.transcript and ph_t.transcript.strip() and ph_t.transcript.strip() != "[inaudible]":
+        ph_text = ph_t.transcript.strip()
+        is_neg = any(neg in ph_text.lower() for neg in ["no ", "none", "nothing", "नहीं", "कोई नहीं"])
+        if is_neg:
+            medical_history_items.append({
+                "fact": "No significant past medical or surgical history reported",
+                "category": "Medical History",
                 "source": {
                     "type": "turn",
-                    "id": t.id,
-                    "label": label,
-                    "quote": text[:200],
+                    "id": ph_t.id,
+                    "label": f"Transcript #{ph_t.id}",
+                    "quote": ph_text[:200],
                 },
             })
         else:
-            subjective_items.append({
-                "fact": f"Insufficient information provided for {cat.lower()}.",
-                "category": cat,
+            medical_history_items.append({
+                "fact": ph_text,
+                "category": "Past Medical History",
                 "source": {
                     "type": "turn",
-                    "id": primary_turn_id,
-                    "label": label,
-                    "quote": f"No {cat.lower()} details recorded in intake interview.",
+                    "id": ph_t.id,
+                    "label": f"Transcript #{ph_t.id}",
+                    "quote": ph_text[:200],
                 },
             })
+    else:
+        medical_history_items.append({
+            "fact": "No significant past medical or surgical history reported",
+            "category": "Medical History",
+            "source": {
+                "type": "turn",
+                "id": primary_turn_id,
+                "label": f"Transcript #{primary_turn_id}",
+                "quote": "No past medical history recorded in intake.",
+            },
+        })
 
-    # Extract Objective facts from actual documents only
+    # 4. Medications
+    med_t = turn_by_step.get("medications")
+    medications_items = []
+    if med_t and med_t.transcript and med_t.transcript.strip() and med_t.transcript.strip() != "[inaudible]":
+        med_text = med_t.transcript.strip()
+        is_neg_med = any(neg in med_text.lower() for neg in ["no ", "none", "not taking", "नहीं", "कोई दवा नहीं"])
+        if not is_neg_med:
+            medications_items.append({
+                "fact": f"Patient reported: {med_text}",
+                "category": "Patient-Reported Medications",
+                "source": {
+                    "type": "turn",
+                    "id": med_t.id,
+                    "label": f"Transcript #{med_t.id}",
+                    "quote": med_text[:200],
+                },
+            })
+    # Also extract medications from documents
     for doc in documents:
         raw_json = doc.extracted_json or {}
-        doc_label = f"Document: {doc.filename}"
-
-        for diag in raw_json.get("diagnoses", []):
-            objective_items.append({
-                "fact": f"Documented prior diagnosis: {diag}",
-                "category": "Documented Diagnoses",
-                "source": {
-                    "type": "document",
-                    "id": doc.id,
-                    "label": doc_label,
-                    "quote": str(diag),
-                },
-            })
-
         for drug in raw_json.get("drug_names", []):
             if isinstance(drug, dict):
                 d_name = drug.get("name", "Medication")
                 d_dose = drug.get("dosage") or ""
                 d_freq = drug.get("frequency") or ""
-                desc = f"Active prescription: {d_name} {d_dose} ({d_freq})".strip()
+                desc = f"Documented prescription: {d_name} {d_dose} ({d_freq})".strip()
             else:
-                desc = f"Active prescription: {drug}"
-            objective_items.append({
+                desc = f"Documented prescription: {drug}"
+            medications_items.append({
                 "fact": desc,
                 "category": "Documented Prescriptions",
                 "source": {
                     "type": "document",
                     "id": doc.id,
-                    "label": doc_label,
+                    "label": f"Document #{doc.id}",
                     "quote": desc[:150],
                 },
             })
+    if not medications_items:
+        medications_items.append({
+            "fact": "No current medications reported or documented",
+            "category": "Medications",
+            "source": {
+                "type": "turn",
+                "id": med_t.id if med_t else primary_turn_id,
+                "label": f"Transcript #{med_t.id if med_t else primary_turn_id}",
+                "quote": "No active medications recorded.",
+            },
+        })
 
-        for m in raw_json.get("measurements", []):
-            raw_m = m.get("raw") if isinstance(m, dict) else str(m)
-            objective_items.append({
-                "fact": f"Recorded vital/lab measurement: {raw_m}",
-                "category": "Vital Signs & Labs",
+    # 5. Allergies
+    all_t = turn_by_step.get("allergies")
+    allergies_items = []
+    if all_t and all_t.transcript and all_t.transcript.strip() and all_t.transcript.strip() != "[inaudible]":
+        all_text = all_t.transcript.strip()
+        is_neg_all = any(neg in all_text.lower() for neg in ["no known", "none", "nkda", "नहीं", "कोई नहीं"])
+        if is_neg_all:
+            allergies_items.append({
+                "fact": "No known allergies reported (NKDA)",
+                "category": "Allergies",
                 "source": {
-                    "type": "document",
-                    "id": doc.id,
-                    "label": doc_label,
-                    "quote": raw_m[:100],
+                    "type": "turn",
+                    "id": all_t.id,
+                    "label": f"Transcript #{all_t.id}",
+                    "quote": all_text[:200],
                 },
             })
-
-    if not objective_items:
-        objective_items.append({
-            "fact": "No prior medical documents or lab reports uploaded for this visit.",
-            "category": "Clinical Documentation",
+        else:
+            allergies_items.append({
+                "fact": all_text,
+                "category": "Known Allergies",
+                "source": {
+                    "type": "turn",
+                    "id": all_t.id,
+                    "label": f"Transcript #{all_t.id}",
+                    "quote": all_text[:200],
+                },
+            })
+    else:
+        allergies_items.append({
+            "fact": "No known allergies reported (NKDA)",
+            "category": "Allergies",
             "source": {
                 "type": "turn",
                 "id": primary_turn_id,
-                "label": "Transcript: Chief Complaint",
-                "quote": "No prior medical documents or lab reports uploaded for this visit.",
+                "label": f"Transcript #{primary_turn_id}",
+                "quote": "No allergies recorded in intake.",
             },
         })
 
-    # Clean textual references for Assessment and Plan
-    cc_t = turn_by_step.get("chief_complaint")
-    dur_t = turn_by_step.get("duration")
-    assoc_t = turn_by_step.get("associated_symptoms")
-    ph_t = turn_by_step.get("past_history")
-    med_t = turn_by_step.get("medications")
-    all_t = turn_by_step.get("allergies")
-
-    cc_text = (cc_t.transcript or "").strip() if cc_t else "Unspecified symptoms"
-    dur_text = (dur_t.transcript or "").strip() if dur_t else "unspecified duration"
-    assoc_text = (assoc_t.transcript or "").strip() if assoc_t else "No other associated symptoms"
-    ph_text = (ph_t.transcript or "").strip() if ph_t else "No significant history"
-    med_text = (med_t.transcript or "").strip() if med_t else "No active medications"
-    all_text = (all_t.transcript or "").strip() if all_t else "No known allergies"
-
-    clean_cc = cc_text.replace("I am experiencing ", "").replace("मुझे ", "").rstrip("।.") or "reported symptoms"
-    clean_dur = dur_text.replace("It has been ", "").rstrip("।.") or "reported timeframe"
-    clean_assoc = assoc_text.replace("Other symptoms include: ", "").rstrip("।.") or "associated symptoms"
-
-    # Assessment (A): Base strictly on what was reported, NO diagnoses, NO boilerplate
-    assessment_items.append({
-        "fact": f"Reported acute symptom complex: {clean_cc} with reported duration of {clean_dur}.",
-        "category": "Reported Symptom Complex",
-        "source": {
-            "type": "turn",
-            "id": cc_t.id if cc_t else primary_turn_id,
-            "label": "Transcript: Chief Complaint",
-            "quote": cc_text[:150],
-        },
-    })
-
-    assessment_items.append({
-        "fact": f"Associated clinical factors: {assoc_text}.",
-        "category": "Clinical Risk Profile",
-        "source": {
-            "type": "turn",
-            "id": assoc_t.id if assoc_t else primary_turn_id,
-            "label": "Transcript: Associated Symptoms",
-            "quote": assoc_text[:150],
-        },
-    })
-
-    assessment_items.append({
-        "fact": f"Medical profile & allergies: {ph_text}; {med_text}; {all_text}.",
-        "category": "Clinical Risk Profile",
-        "source": {
-            "type": "turn",
-            "id": all_t.id if all_t else (ph_t.id if ph_t else primary_turn_id),
-            "label": "Transcript: Allergies" if all_t else "Transcript: Past Medical History",
-            "quote": (all_text or ph_text)[:150],
-        },
-    })
-
-    # Plan (P): Process-level next steps appropriate for pre-consultation draft
-    plan_items.append({
-        "fact": f"Attending physician to conduct focused physical examination of {clean_cc} and evaluate {clean_assoc}.",
-        "category": "Physician Clinical Examination",
-        "source": {
-            "type": "turn",
-            "id": cc_t.id if cc_t else primary_turn_id,
-            "label": "Transcript: Chief Complaint",
-            "quote": cc_text[:150],
-        },
-    })
-
-    plan_items.append({
-        "fact": f"Obtain baseline triage vital signs (temperature, heart rate, blood pressure, SpO2) on arrival to evaluate reported {clean_cc}.",
-        "category": "Triage & Vitals Acquisition",
-        "source": {
-            "type": "turn",
-            "id": dur_t.id if dur_t else primary_turn_id,
-            "label": "Transcript: Duration",
-            "quote": dur_text[:150],
-        },
-    })
-
-    if "no known" not in all_text.lower() and "कोई ज्ञात" not in all_text:
-        plan_items.append({
-            "fact": f"Physician to verify reported allergy profile ({all_text}) prior to prescribing or administering any medications.",
-            "category": "Allergy & Medication Safety",
+    # 6. Previous Investigations
+    investigation_items = []
+    for doc in documents:
+        raw_json = doc.extracted_json or {}
+        for m in raw_json.get("measurements", []):
+            raw_m = m.get("raw") if isinstance(m, dict) else str(m)
+            m_type = m.get("type", "Investigation") if isinstance(m, dict) else "Measurement"
+            investigation_items.append({
+                "fact": f"Recorded {m_type}: {raw_m}",
+                "category": "Vital Signs & Lab Values",
+                "source": {
+                    "type": "document",
+                    "id": doc.id,
+                    "label": f"Document #{doc.id}",
+                    "quote": raw_m[:100],
+                },
+            })
+        for diag in raw_json.get("diagnoses", []):
+            investigation_items.append({
+                "fact": f"Documented prior clinical finding: {diag}",
+                "category": "Prior Diagnostic Records",
+                "source": {
+                    "type": "document",
+                    "id": doc.id,
+                    "label": f"Document #{doc.id}",
+                    "quote": str(diag)[:100],
+                },
+            })
+    if not investigation_items:
+        investigation_items.append({
+            "fact": "No previous laboratory or diagnostic investigations uploaded",
+            "category": "Previous Investigations",
             "source": {
                 "type": "turn",
-                "id": all_t.id if all_t else primary_turn_id,
-                "label": "Transcript: Allergies",
-                "quote": all_text[:150],
+                "id": primary_turn_id,
+                "label": f"Transcript #{primary_turn_id}",
+                "quote": "No medical documents or lab reports uploaded for this visit.",
+            },
+        })
+
+    # 7. Timeline
+    timeline_items = []
+    for doc in documents:
+        raw_json = doc.extracted_json or {}
+        doc_dates = raw_json.get("dates", [])
+        date_str = "Recent"
+        if doc_dates and isinstance(doc_dates, list):
+            first_d = doc_dates[0]
+            date_str = first_d.get("value") if isinstance(first_d, dict) else str(first_d)
+
+        # Medication timeline entry
+        for drug in raw_json.get("drug_names", []):
+            name = drug.get("name") if isinstance(drug, dict) else str(drug)
+            timeline_items.append({
+                "fact": f"Prescribed: {name} (Doc: {doc.filename})",
+                "date": date_str,
+                "title": f"Prescription: {name}",
+                "category": "medication",
+                "details": f"Prescription record from {doc.filename}",
+                "source": {
+                    "type": "document",
+                    "id": doc.id,
+                    "label": f"Document #{doc.id}",
+                    "quote": f"{name} on {date_str}",
+                },
+            })
+        # Measurement timeline entry
+        for m in raw_json.get("measurements", []):
+            raw_m = m.get("raw") if isinstance(m, dict) else str(m)
+            timeline_items.append({
+                "fact": f"Lab/Vital: {raw_m}",
+                "date": date_str,
+                "title": f"Investigation: {raw_m}",
+                "category": "measurement",
+                "details": f"Recorded in {doc.filename}",
+                "source": {
+                    "type": "document",
+                    "id": doc.id,
+                    "label": f"Document #{doc.id}",
+                    "quote": raw_m[:100],
+                },
+            })
+    if not timeline_items:
+        timeline_items.append({
+            "fact": "No timeline events available from medical documents",
+            "date": "N/A",
+            "title": "No uploaded records",
+            "category": "document",
+            "details": "No prior medical documents on file for timeline generation",
+            "source": {
+                "type": "turn",
+                "id": primary_turn_id,
+                "label": f"Transcript #{primary_turn_id}",
+                "quote": "No documents uploaded.",
+            },
+        })
+
+    # 8. Red Flags
+    red_flag_items = []
+    transcripts_list = [getattr(t, "transcript", "") or "" for t in turns]
+    red_flag_result = evaluate_red_flags(transcripts_list)
+    is_urgent_visit = getattr(visit, "urgency_flag", False) or (red_flag_result and red_flag_result.is_urgent)
+    if is_urgent_visit:
+        reason = getattr(visit, "urgency_reason", None) or (red_flag_result.reason if red_flag_result else "Urgent symptom combination detected")
+        dept = getattr(visit, "department", None) or (red_flag_result.department if red_flag_result else "Emergency")
+        red_flag_items.append({
+            "fact": f"Urgent alert: {reason}. Recommended department: {dept}.",
+            "category": "Urgent Triage Alert",
+            "severity": "urgent",
+            "department": dept,
+            "source": {
+                "type": "turn",
+                "id": primary_turn_id,
+                "label": f"Transcript #{primary_turn_id}",
+                "quote": reason[:150],
             },
         })
     else:
-        plan_items.append({
-            "fact": "Verify allergy status with patient during physical intake consultation.",
-            "category": "Allergy & Medication Safety",
+        red_flag_items.append({
+            "fact": "No acute red-flag symptoms detected",
+            "category": "Clinical Safety Profile",
+            "severity": "normal",
             "source": {
                 "type": "turn",
-                "id": all_t.id if all_t else primary_turn_id,
-                "label": "Transcript: Allergies",
-                "quote": all_text[:150],
+                "id": primary_turn_id,
+                "label": f"Transcript #{primary_turn_id}",
+                "quote": "Standard triage review: no red flags triggered.",
             },
         })
 
-    if primary_doc_id:
-        plan_items.append({
-            "fact": "Reconcile active medications and documented prior diagnoses against medical records during consultation.",
-            "category": "Allergy & Medication Safety",
-            "source": {
-                "type": "document",
-                "id": primary_doc_id,
-                "label": f"Document: {documents[0].filename}",
-                "quote": f"Reconciliation of records from {documents[0].filename}",
-            },
-        })
-
-    plan_items.append({
-        "fact": f"Reassess in follow-up if {clean_cc} persists beyond {clean_dur} or worsens; advise emergency triage immediately if severe warning signs develop.",
-        "category": "Patient Warning Signs & Follow-up",
-        "source": {
-            "type": "turn",
-            "id": cc_t.id if cc_t else primary_turn_id,
-            "label": "Transcript: Chief Complaint",
-            "quote": cc_text[:150],
-        },
-    })
-
+    # Clinical Summary
+    cc_summary = chief_complaint_items[0]["fact"] if chief_complaint_items else "unspecified symptoms"
     summary = (
         f"Pre-consultation clinical case draft for {patient_name} (Age: {patient_age or 'Not specified'}, Lang: {language.upper()}). "
-        f"Patient reports {clean_cc} of {clean_dur} duration with associated {clean_assoc}. "
-        f"Allergies: {all_text}; Medications: {med_text}; Past history: {ph_text}. "
+        f"Chief complaint: {cc_summary}. "
+        f"Allergies: {allergies_items[0]['fact'] if allergies_items else 'None reported'}; "
+        f"Medications: {medications_items[0]['fact'] if medications_items else 'None reported'}; "
+        f"Past history: {medical_history_items[0]['fact'] if medical_history_items else 'None reported'}. "
         f"{len(documents)} medical documents on file."
     )
 
+    # Backward-compatible SOAP mappings for any legacy consumer
+    subjective_compat = chief_complaint_items + hpi_items + medical_history_items + allergies_items
+    objective_compat = investigation_items + [m for m in medications_items if m.get("source", {}).get("type") == "document"]
+    assessment_compat = [{
+        "fact": f"Clinical profile: {cc_summary}. Red flags: {red_flag_items[0]['fact']}.",
+        "category": "Assessment Summary",
+        "source": chief_complaint_items[0]["source"],
+    }]
+    plan_compat = [{
+        "fact": f"Attending physician to conduct focused examination regarding {cc_summary}.",
+        "category": "Clinical Next Step",
+        "source": chief_complaint_items[0]["source"],
+    }]
+
     return {
         "clinical_summary": summary,
-        "subjective": subjective_items,
-        "objective": objective_items,
-        "assessment": assessment_items,
-        "plan": plan_items,
+        "chief_complaint": chief_complaint_items,
+        "hpi": hpi_items,
+        "medical_history": medical_history_items,
+        "medications": medications_items,
+        "allergies": allergies_items,
+        "previous_investigations": investigation_items,
+        "timeline": timeline_items,
+        "red_flags": red_flag_items,
+        # Backward compatibility keys:
+        "subjective": subjective_compat,
+        "objective": objective_compat,
+        "assessment": assessment_compat,
+        "plan": plan_compat,
     }
 
 
@@ -1289,12 +1383,19 @@ def generate_soap_case_draft(
     documents: list,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    Generates a structured SOAP case draft for a visit using Gemini 2.0 Flash.
+    Generates a structured 8-section case draft for a visit using Gemini 2.0 Flash.
     Returns:
       (content_dict, source_links_dict)
-    where:
-      - content_dict: {clinical_summary, subjective, objective, assessment, plan}
-      - source_links_dict: {turns: {id: ...}, documents: {id: ...}, generated_at: ...}
+    where content_dict contains the 8 requested keys:
+      1. chief_complaint
+      2. hpi
+      3. medical_history
+      4. medications
+      5. allergies
+      6. previous_investigations
+      7. timeline
+      8. red_flags
+      (plus clinical_summary and backward-compatible SOAP keys)
     """
     patient = getattr(visit, "patient", None)
     patient_name = getattr(patient, "name", "Patient") if patient else "Patient"
@@ -1350,8 +1451,8 @@ def generate_soap_case_draft(
 
     # If Gemini API key is missing, use deterministic clinical fallback
     if not settings.GEMINI_API_KEY:
-        logger.warning("GEMINI_API_KEY not set. Using clinical synthesis fallback for case draft.")
-        fallback = _generate_fallback_soap(patient_name, patient_age, language, turns, documents)
+        logger.warning("GEMINI_API_KEY not set. Using clinical synthesis fallback for 8-section case draft.")
+        fallback = _generate_fallback_soap(patient_name, patient_age, language, turns, documents, visit=visit)
         return fallback, source_links
 
     # Otherwise, invoke Gemini 2.0 Flash
@@ -1368,33 +1469,48 @@ def generate_soap_case_draft(
 
         cfg = types.GenerateContentConfig(
             temperature=0.2,
-            max_output_tokens=3072,
+            max_output_tokens=4096,
             response_mime_type="application/json",
         )
 
         response = _generate_with_fallback(client, prompt, config=cfg)
 
         raw_text = (response.text or "").strip()
-        # Clean potential markdown fences
         cleaned = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.MULTILINE)
         cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.MULTILINE).strip()
         parsed = json.loads(cleaned)
 
-        # Basic structure validation
-        for section in ("subjective", "objective", "assessment", "plan"):
-            if section not in parsed or not isinstance(parsed[section], list):
-                parsed[section] = []
+        EIGHT_KEYS = [
+            "chief_complaint",
+            "hpi",
+            "medical_history",
+            "medications",
+            "allergies",
+            "previous_investigations",
+            "timeline",
+            "red_flags",
+        ]
+
+        # Ensure all 8 keys exist as lists
+        fallback_content = _generate_fallback_soap(patient_name, patient_age, language, turns, documents, visit=visit)
+
+        for key in EIGHT_KEYS:
+            if key not in parsed or not isinstance(parsed[key], list) or len(parsed[key]) == 0:
+                parsed[key] = fallback_content.get(key, [])
 
         # Validate and normalize sources in each section
         valid_turn_ids = {t.id for t in turns}
         valid_doc_ids = {d.id for d in documents}
         first_turn_id = turns[0].id if turns else 1
 
-        for section in ("subjective", "objective", "assessment", "plan"):
+        for section in EIGHT_KEYS:
             clean_items = []
             for item in parsed[section]:
-                if not isinstance(item, dict) or not item.get("fact"):
+                if not isinstance(item, dict):
                     continue
+                if not item.get("fact") and not item.get("title"):
+                    continue
+
                 src = item.get("source")
                 if not isinstance(src, dict):
                     src = {}
@@ -1421,20 +1537,32 @@ def generate_soap_case_draft(
                 else:
                     src["id"] = src_id
 
-                if not src.get("label"):
-                    src["label"] = "Transcript: Intake Turn" if src["type"] == "turn" else "Document: Attached Record"
+                # Enforce clean label format: "Transcript #<ID>" or "Document #<ID>"
+                if src["type"] == "document":
+                    src["label"] = f"Document #{src['id']}"
+                else:
+                    src["label"] = f"Transcript #{src['id']}"
 
                 if not src.get("quote"):
-                    src["quote"] = str(item.get("fact", ""))[:150]
+                    src["quote"] = str(item.get("fact") or item.get("title") or "")[:150]
 
                 clean_items.append(item)
-            parsed[section] = clean_items
+
+            # If clean items is empty, take from fallback
+            parsed[section] = clean_items if clean_items else fallback_content.get(section, [])
+
+        # Populate backward-compatible keys
+        parsed["clinical_summary"] = parsed.get("clinical_summary") or fallback_content.get("clinical_summary")
+        parsed["subjective"] = parsed.get("chief_complaint", []) + parsed.get("hpi", []) + parsed.get("medical_history", []) + parsed.get("allergies", [])
+        parsed["objective"] = parsed.get("previous_investigations", []) + [m for m in parsed.get("medications", []) if m.get("source", {}).get("type") == "document"]
+        parsed["assessment"] = fallback_content.get("assessment", [])
+        parsed["plan"] = fallback_content.get("plan", [])
 
         return parsed, source_links
 
     except Exception as e:
         logger.error("Gemini case draft generation error: %s. Falling back to clinical synthesis.", e, exc_info=True)
-        fallback = _generate_fallback_soap(patient_name, patient_age, language, turns, documents)
+        fallback = _generate_fallback_soap(patient_name, patient_age, language, turns, documents, visit=visit)
         return fallback, source_links
 
 
