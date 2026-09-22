@@ -67,9 +67,16 @@ export default function DocumentUpload({
     formData.append('visit_id', visitId || 1);
     formData.append('file', file);
 
+    const token = sessionStorage.getItem('predoc_patient_token') || sessionStorage.getItem('predoc_auth_token');
+    const headers = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     try {
       const res = await fetch(`${API_BASE}/documents/extract`, {
         method: 'POST',
+        headers,
         body: formData,
       });
 

@@ -101,6 +101,31 @@ def init_db():
                 conn.execute(text("ALTER TABLE document_records ADD COLUMN image_base64 TEXT"))
             except Exception:
                 pass
+            # 6. visits.consent_given
+            try:
+                conn.execute(text("ALTER TABLE visits ADD COLUMN consent_given BOOLEAN DEFAULT 0"))
+            except Exception:
+                pass
+            # 7. visits.consent_timestamp
+            try:
+                conn.execute(text("ALTER TABLE visits ADD COLUMN consent_timestamp TIMESTAMP"))
+            except Exception:
+                pass
+            # 8. visits.visit_token (patient session isolation)
+            try:
+                conn.execute(text("ALTER TABLE visits ADD COLUMN visit_token VARCHAR(36)"))
+            except Exception:
+                pass
+            # 9. patients.patient_code (PD-XXXXXX unique identity)
+            try:
+                conn.execute(text("ALTER TABLE patients ADD COLUMN patient_code VARCHAR(12)"))
+            except Exception:
+                pass
+            # 10. patients.pin_hash (bcrypt-hashed 4-digit PIN)
+            try:
+                conn.execute(text("ALTER TABLE patients ADD COLUMN pin_hash VARCHAR(128)"))
+            except Exception:
+                pass
 
         logger.info("Database tables and column migrations initialized successfully.")
     except Exception as e:
@@ -108,3 +133,16 @@ def init_db():
             "Could not initialize database tables automatically: %s",
             e,
         )
+
+
+def seed_staff_users() -> None:
+    """Seed demo staff accounts (doctor_demo, nurse_demo) if they don't exist."""
+    try:
+        from app.services.auth import seed_staff_users as _seed
+        db = SessionLocal()
+        try:
+            _seed(db)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("[DB] Could not seed staff users: %s", e)

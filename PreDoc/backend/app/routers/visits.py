@@ -11,6 +11,7 @@ from app.models.case_draft import CaseDraft
 from app.models.document_record import DocumentRecord
 from app.models.intake_turn import IntakeTurn
 from app.models.patient import Patient
+from app.models.user import User
 from app.models.visit import Visit
 from app.schemas.case_draft import (
     ApproveDraftRequest,
@@ -18,6 +19,13 @@ from app.schemas.case_draft import (
     CaseDraftResponse,
     CaseDraftUpdateRequest,
     SOAPContent,
+)
+from app.services.auth import (
+    get_current_staff,
+    require_doctor,
+    get_current_patient,
+    get_current_actor,
+    verify_visit_access,
 )
 from app.services.gemini import generate_soap_case_draft
 
@@ -27,10 +35,124 @@ router = APIRouter(prefix="/api/visits", tags=["Visits & Case Drafts"])
 
 
 # ---------------------------------------------------------------------------
+# GET /api/visits/patient/my-visits (Patient-only: own visit history)
+# ---------------------------------------------------------------------------
+@router.get("/patient/my-visits")
+def get_patient_my_visits(
+    current_patient: Patient = Depends(get_current_patient),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns all visits belonging to the authenticated patient.
+    Enforces API-level access control: patients can strictly ONLY access their own records.
+    """
+    visits = (
+        db.query(Visit)
+        .filter(Visit.patient_id == current_patient.id)
+        .order_by(Visit.id.desc())
+        .all()
+    )
+    results = []
+    for v in visits:
+        draft = db.query(CaseDraft).filter(CaseDraft.visit_id == v.id).first()
+        turn_count = db.query(IntakeTurn.id).filter(IntakeTurn.visit_id == v.id).count()
+        doc_count = db.query(DocumentRecord.id).filter(DocumentRecord.visit_id == v.id).count()
+        results.append({
+            "visit_id": v.id,
+            "patient_id": v.patient_id,
+            "patient_name": current_patient.name,
+            "patient_code": current_patient.patient_code,
+            "status": v.status,
+            "urgency_flag": v.urgency_flag,
+            "department": v.department or "General Medicine",
+            "urgency_reason": v.urgency_reason,
+            "created_at": v.created_at.isoformat() if getattr(v, "created_at", None) else None,
+            "turn_count": turn_count,
+            "doc_count": doc_count,
+            "has_draft": draft is not None and draft.content_json is not None,
+            "is_approved": bool(draft.is_approved) if draft else False,
+        })
+    return {
+        "patient": {
+            "id": current_patient.id,
+            "patient_code": current_patient.patient_code,
+            "name": current_patient.name,
+            "age": current_patient.age,
+            "language": current_patient.language,
+        },
+        "visits": results,
+        "total": len(results),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/visits/{id}/patient-summary (Patient-safe structured summary)
+# ---------------------------------------------------------------------------
+@router.get("/{id}/patient-summary")
+def get_patient_visit_summary(
+    id: int,
+    db: Session = Depends(get_db),
+    actor: Optional[dict] = Depends(get_current_actor),
+):
+    """
+    Returns a patient-safe plain language summary of their intake and uploaded documents.
+    Enforces API-level access control: patients can only access their own visit (403 otherwise).
+    """
+    visit = db.query(Visit).filter(Visit.id == id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Visit {id} not found")
+    verify_visit_access(visit, actor)
+
+    patient = visit.patient
+    turns = db.query(IntakeTurn).filter(IntakeTurn.visit_id == id).order_by(IntakeTurn.id.asc()).all()
+    docs = db.query(DocumentRecord).filter(DocumentRecord.visit_id == id).order_by(DocumentRecord.created_at.asc()).all()
+    draft = db.query(CaseDraft).filter(CaseDraft.visit_id == id).first()
+
+    return {
+        "visit_id": visit.id,
+        "patient": {
+            "id": patient.id if patient else None,
+            "patient_code": getattr(patient, "patient_code", None),
+            "name": patient.name if patient else "Patient",
+            "age": patient.age if patient else None,
+            "language": patient.language if patient else "en",
+        },
+        "status": visit.status,
+        "urgency_flag": visit.urgency_flag,
+        "department": visit.department,
+        "urgency_reason": visit.urgency_reason,
+        "consent_given": getattr(visit, "consent_given", True),
+        "consent_timestamp": visit.consent_timestamp.isoformat() if getattr(visit, "consent_timestamp", None) else None,
+        "created_at": visit.created_at.isoformat() if getattr(visit, "created_at", None) else None,
+        "turns": [
+            {
+                "id": t.id,
+                "step": t.step,
+                "question": t.question,
+                "transcript": t.transcript,
+                "language": t.language,
+            }
+            for t in turns
+        ],
+        "documents": [
+            {
+                "id": d.id,
+                "filename": d.filename,
+                "extracted_json": d.extracted_json,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in docs
+        ],
+        "has_draft": draft is not None and draft.content_json is not None,
+        "draft_summary": draft.content_json if draft else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # POST /api/visits/{id}/generate-draft
 # ---------------------------------------------------------------------------
 @router.post("/{id}/generate-draft", response_model=CaseDraftResponse)
-def generate_case_draft(id: int, db: Session = Depends(get_db)):
+def generate_case_draft(id: int, db: Session = Depends(get_db), current_user: User = Depends(require_doctor)):
     """
     Synthesizes the intake interview transcript and extracted document data
     for visit {id} into a structured SOAP-style clinical case draft using Gemini.
@@ -116,7 +238,7 @@ def generate_case_draft(id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @router.get("/{id}/case", response_model=CaseContextResponse)
 @router.get("/{id}/case-context", response_model=CaseContextResponse)
-def get_case_context(id: int, db: Session = Depends(get_db)):
+def get_case_context(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_staff)):
     """
     Returns the complete case context for visit {id}, including patient info,
     current case draft (if generated), all intake turns, and uploaded documents with base64 images.
@@ -206,6 +328,8 @@ def get_case_context(id: int, db: Session = Depends(get_db)):
         "urgency_flag": visit.urgency_flag,
         "department": visit.department,
         "urgency_reason": visit.urgency_reason,
+        "consent_given": getattr(visit, "consent_given", False),
+        "consent_timestamp": visit.consent_timestamp.isoformat() if getattr(visit, "consent_timestamp", None) else None,
         "created_at": getattr(visit, "created_at", None),
     }
 
@@ -220,6 +344,8 @@ def get_case_context(id: int, db: Session = Depends(get_db)):
         urgency_flag=visit.urgency_flag,
         department=visit.department,
         urgency_reason=visit.urgency_reason,
+        consent_given=bool(getattr(visit, "consent_given", False)),
+        consent_timestamp=getattr(visit, "consent_timestamp", None),
         is_approved=is_approved,
         approved_at=approved_at,
         approved_by=approved_by,
@@ -236,6 +362,7 @@ def update_case_draft(
     id: int,
     payload: CaseDraftUpdateRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor),
 ):
     """
     Allows a doctor to modify any field in the generated SOAP draft inline.
@@ -296,6 +423,7 @@ def approve_case_draft(
     id: int,
     body: Optional[ApproveDraftRequest] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor),
 ):
     """
     Approve the case draft and lock it as final.
@@ -351,6 +479,7 @@ def approve_case_draft(
 def get_doctor_queue(
     filter_status: Optional[str] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_staff),
 ):
     """
     Returns all visits for the Doctor Dashboard (/doctor).
@@ -374,11 +503,13 @@ def get_doctor_queue(
 
         chief_complaint = None
         if draft and draft.content_json:
-            chief_complaint = draft.content_json.get("chief_complaint") or (
-                draft.content_json.get("subjective", [{}])[0].get("fact")
-                if isinstance(draft.content_json.get("subjective"), list) and len(draft.content_json.get("subjective")) > 0
-                else None
-            )
+            cc_data = draft.content_json.get("chief_complaint")
+            if isinstance(cc_data, list) and len(cc_data) > 0 and isinstance(cc_data[0], dict):
+                chief_complaint = cc_data[0].get("fact")
+            elif isinstance(cc_data, str):
+                chief_complaint = cc_data
+            elif isinstance(draft.content_json.get("subjective"), list) and len(draft.content_json.get("subjective")) > 0:
+                chief_complaint = draft.content_json.get("subjective")[0].get("fact")
 
         results.append({
             "id": v.id,
@@ -391,6 +522,8 @@ def get_doctor_queue(
             "urgency_flag": v.urgency_flag,
             "department": v.department or "General Medicine",
             "urgency_reason": v.urgency_reason,
+            "consent_given": bool(getattr(v, "consent_given", False)),
+            "consent_timestamp": v.consent_timestamp.isoformat() if getattr(v, "consent_timestamp", None) else None,
             "has_draft": has_draft,
             "chief_complaint": chief_complaint,
             "is_approved": is_approved,
@@ -411,6 +544,7 @@ def get_triage_feed(
     department: Optional[str] = None,
     all_visits: bool = False,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_staff),
 ):
     """
     Returns real-time triage queue for clinical staff.
@@ -465,6 +599,7 @@ def update_visit_triage(
     id: int,
     payload: Dict[str, Any],
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_staff),
 ):
     """
     Update visit triage status, urgency, or assigned department.
@@ -504,7 +639,7 @@ def update_visit_triage(
 # GET /api/visits
 # ---------------------------------------------------------------------------
 @router.get("", response_model=List[Dict[str, Any]])
-def list_visits(db: Session = Depends(get_db)):
+def list_visits(db: Session = Depends(get_db), current_user: User = Depends(get_current_staff)):
     """Return a list of recent visits with patient info, draft status, and summary counts."""
     visits = db.query(Visit).order_by(Visit.id.desc()).limit(20).all()
     results = []

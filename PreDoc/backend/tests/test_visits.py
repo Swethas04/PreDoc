@@ -98,25 +98,39 @@ class TestVisitsAndCaseDraft(unittest.TestCase):
         self.assertIn("source_links", data)
         self.assertEqual(data["patient_name"], "Sunita Sharma")
 
-        # Validate SOAP content
+        # Validate 8 clinical section keys
         content = data["content"]
-        self.assertIn("subjective", content)
-        self.assertIn("objective", content)
-        self.assertIn("assessment", content)
-        self.assertIn("plan", content)
-        self.assertTrue(len(content["subjective"]) > 0)
-        self.assertTrue(len(content["objective"]) > 0)
+        eight_keys = [
+            "chief_complaint",
+            "hpi",
+            "medical_history",
+            "medications",
+            "allergies",
+            "previous_investigations",
+            "timeline",
+            "red_flags",
+        ]
+        for k in eight_keys:
+            self.assertIn(k, content, f"Missing required key: {k}")
+            self.assertTrue(len(content[k]) > 0, f"Key {k} is empty")
 
-        # Validate every SOAP item has valid fact and source attribution
-        for section in ("subjective", "objective", "assessment", "plan"):
-            for item in content[section]:
-                self.assertIn("fact", item)
-                self.assertTrue(len(item["fact"]) > 0)
+        # Validate source tags in 8 sections
+        for k in eight_keys:
+            for item in content[k]:
                 self.assertIn("source", item)
                 src = item["source"]
                 self.assertIn(src["type"], ["turn", "document"])
                 self.assertIsInstance(src["id"], int)
-                self.assertIn("label", src)
+                self.assertTrue(
+                    src["label"].startswith("Transcript #") or src["label"].startswith("Document #"),
+                    f"Label '{src['label']}' must start with Transcript # or Document #"
+                )
+
+        # Backward-compatible SOAP mappings
+        self.assertIn("subjective", content)
+        self.assertIn("objective", content)
+        self.assertIn("assessment", content)
+        self.assertIn("plan", content)
 
         # Verify saved in database
         saved_draft = self.db.query(CaseDraft).filter(CaseDraft.visit_id == self.visit_id).first()

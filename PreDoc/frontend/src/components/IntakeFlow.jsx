@@ -24,9 +24,16 @@ import {
   Upload,
   Sparkles,
   ShieldAlert,
+  ShieldCheck,
+  Lock,
+  Pill,
+  Activity,
+  ArrowRight,
+  FileCheck,
 } from 'lucide-react';
 import DocumentUpload from './DocumentUpload';
 import MedicalTimeline from './MedicalTimeline';
+import PatientIDCard from './PatientIDCard';
 
 // ─── Clinical step metadata ───────────────────────────────────────────────────
 const CLINICAL_STEPS = [
@@ -831,95 +838,161 @@ function ModeToggle({ mode, onChange }) {
   );
 }
 
-// ─── Start Intake Screen ──────────────────────────────────────────────────────
-function StartIntakeScreen({ onStart, loading, error, onClearError, initialLanguage = 'en' }) {
-  const [selectedLanguage, setSelectedLanguage] = useState(initialLanguage);
-  const [name, setName] = useState('');
-  const [age, setAge] = useState('');
-  const [nameError, setNameError] = useState('');
+// ─── Linear Stepper Breadcrumb ────────────────────────────────────────────────
+const LINEAR_STAGES = [
+  { id: 'language_patient', step: 1, label: { en: '1. Patient & Language', hi: '1. मरीज व भाषा' } },
+  { id: 'consent',          step: 2, label: { en: '2. Consent',         hi: '2. सहमति' } },
+  { id: 'interview',        step: 3, label: { en: '3. Interview',       hi: '3. साक्षात्कार' } },
+  { id: 'upload_docs',      step: 4, label: { en: '4. Documents (1-3)', hi: '4. दस्तावेज़ (1-3)' } },
+  { id: 'ai_extraction',    step: 5, label: { en: '5. AI Extraction',   hi: '5. एआई विश्लेषण' } },
+  { id: 'structured_history', step: 6, label: { en: '6. Structured History', hi: '6. संरचित इतिहास' } },
+];
 
-  const handleBegin = (e) => {
-    if (e) e.preventDefault();
-    const finalName = name.trim();
-    if (!finalName) {
-      setNameError(selectedLanguage === 'hi' ? 'कृपया मरीज का नाम दर्ज करें।' : 'Please enter patient name.');
-      return;
-    }
-    setNameError('');
-    if (onClearError) onClearError();
-    const finalAge = age ? parseInt(age, 10) : 35;
-    onStart({ name: finalName, age: finalAge, lang: selectedLanguage });
-  };
+function LinearStepper({ currentStage, language }) {
+  const stageIndex = Math.max(0, LINEAR_STAGES.findIndex(s => s.id === currentStage));
+  return (
+    <div className="w-full bg-white border border-[#E2E8F4] rounded-2xl p-3 shadow-soft mb-6 overflow-x-auto">
+      <div className="flex items-center justify-between min-w-[660px] gap-2">
+        {LINEAR_STAGES.map((st, idx) => {
+          const isDone = idx < stageIndex;
+          const isActive = idx === stageIndex;
+          return (
+            <React.Fragment key={st.id}>
+              <div className="flex items-center gap-2">
+                <div
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                    isDone
+                      ? 'bg-[#2FAE60] text-white'
+                      : isActive
+                      ? 'bg-[#2F6FED] text-white ring-4 ring-[#2F6FED]/20'
+                      : 'bg-[#F6F9FF] border border-[#E2E8F4] text-[#6B7A99]'
+                  }`}
+                >
+                  {isDone ? <Check className="w-3.5 h-3.5" /> : st.step}
+                </div>
+                <span
+                  className={`text-xs font-semibold whitespace-nowrap ${
+                    isActive
+                      ? 'text-[#2F6FED]'
+                      : isDone
+                      ? 'text-[#1A2B4C]'
+                      : 'text-[#6B7A99]'
+                  }`}
+                >
+                  {st.label[language] || st.label.en}
+                </span>
+              </div>
+              {idx < LINEAR_STAGES.length - 1 && (
+                <div
+                  className={`flex-1 h-0.5 mx-1 transition-all ${
+                    idx < stageIndex ? 'bg-[#2FAE60]' : 'bg-[#E2E8F4]'
+                  }`}
+                />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 1: Patient Details & Language Selection ─────────────────────────────
+function PatientAndLanguageStep({
+  initialLanguage = 'en',
+  initialName = '',
+  initialAge = '',
+  onContinue,
+}) {
+  const [selectedLanguage, setSelectedLanguage] = useState(initialLanguage);
+  const [name, setName] = useState(initialName);
+  const [age, setAge] = useState(initialAge ? String(initialAge) : '');
+  const [nameError, setNameError] = useState('');
 
   const isHindi = selectedLanguage === 'hi';
 
+  const handleProceed = (e) => {
+    if (e) e.preventDefault();
+    const finalName = name.trim();
+    if (!finalName) {
+      setNameError(isHindi ? 'कृपया मरीज का नाम दर्ज करें।' : 'Please enter patient name.');
+      return;
+    }
+    setNameError('');
+    onContinue({
+      name: finalName,
+      age: age ? parseInt(age, 10) : 35,
+      lang: selectedLanguage,
+    });
+  };
+
   return (
-    <div className="max-w-2xl mx-auto py-6 space-y-8">
-      {/* Hero Header */}
-      <div className="text-center space-y-3">
-        <div className="w-16 h-16 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center mx-auto shadow-sm">
-          <Sparkles className="w-8 h-8 text-[#2F6FED]" />
+    <div className="max-w-2xl mx-auto py-4 space-y-7">
+      {/* Header */}
+      <div className="text-center space-y-2.5">
+        <div className="w-14 h-14 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center mx-auto shadow-sm">
+          <Languages className="w-7 h-7 text-[#2F6FED]" />
         </div>
-        <h1 className="text-3xl sm:text-4xl font-extrabold text-[#1A2B4C] tracking-tight">
-          {isHindi ? 'मरीज पंजीकरण व पूर्व परामर्श' : 'Patient Intake Consultation'}
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-[#1A2B4C] tracking-tight">
+          {isHindi ? 'मरीज पंजीकरण व भाषा का चयन' : 'Patient Registration & Language'}
         </h1>
-        <p className="text-sm text-[#6B7A99] max-w-md mx-auto">
+        <p className="text-xs sm:text-sm text-[#6B7A99] max-w-md mx-auto">
           {isHindi
-            ? 'अपनी भाषा चुनें और परामर्श शुरू करने के लिए नीचे दिए गए बटन को दबाएं।'
-            : 'Select your preferred language and touch below to begin your guided clinical pre-consultation.'}
+            ? 'अपनी पसंदीदा भाषा चुनें और नाम दर्ज करें ताकि आपका क्लिनिकल रिकॉर्ड तैयार किया जा सके।'
+            : 'Select your preferred consultation language and enter patient details to personalize your intake.'}
         </p>
       </div>
 
-      {/* Step 1: Language Selector Cards */}
-      <div className="space-y-3">
+      {/* Language Selector */}
+      <div className="space-y-2.5">
         <label className="text-xs font-bold text-[#6B7A99] flex items-center gap-1.5 justify-center">
           <Languages className="w-4 h-4 text-[#2F6FED]" />
-          <span>{isHindi ? 'चरण 1: भाषा चुनें' : 'Step 1: Select language / भाषा चुनें'}</span>
+          <span>{isHindi ? 'परामर्श की भाषा चुनें:' : 'Select Consultation Language:'}</span>
         </label>
         <div className="grid grid-cols-2 gap-4 max-w-md mx-auto">
           <button
             type="button"
             onClick={() => setSelectedLanguage('en')}
-            className={`p-5 rounded-2xl border text-center transition shadow-soft ${
+            className={`p-4 rounded-2xl border text-center transition shadow-soft ${
               selectedLanguage === 'en'
                 ? 'border-[#2F6FED] bg-[#EAF1FF] text-[#2F6FED] ring-2 ring-[#2F6FED]/20'
                 : 'border-[#E2E8F4] bg-white text-[#1A2B4C] hover:border-[#2F6FED]/50'
             }`}
           >
-            <div className="text-lg font-bold">English</div>
-            <div className="text-xs text-[#6B7A99] mt-0.5">Clinical English</div>
+            <div className="text-base font-bold">English</div>
+            <div className="text-[11px] text-[#6B7A99] mt-0.5">Clinical English</div>
           </button>
           <button
             type="button"
             onClick={() => setSelectedLanguage('hi')}
-            className={`p-5 rounded-2xl border text-center transition shadow-soft ${
+            className={`p-4 rounded-2xl border text-center transition shadow-soft ${
               selectedLanguage === 'hi'
                 ? 'border-[#2F6FED] bg-[#EAF1FF] text-[#2F6FED] ring-2 ring-[#2F6FED]/20'
                 : 'border-[#E2E8F4] bg-white text-[#1A2B4C] hover:border-[#2F6FED]/50'
             }`}
           >
-            <div className="text-lg font-bold">हिंदी (Hindi)</div>
-            <div className="text-xs text-[#6B7A99] mt-0.5">सहज हिंदी परामर्श</div>
+            <div className="text-base font-bold">हिंदी (Hindi)</div>
+            <div className="text-[11px] text-[#6B7A99] mt-0.5">सहज हिंदी परामर्श</div>
           </button>
         </div>
       </div>
 
-      {/* Step 2: Patient Details — always visible */}
+      {/* Patient Details Form */}
       <div className="max-w-md mx-auto space-y-3">
         <label className="text-xs font-bold text-[#6B7A99] flex items-center gap-1.5 justify-center">
           <User className="w-4 h-4 text-[#2F6FED]" />
-          <span>{isHindi ? 'चरण 2: मरीज की जानकारी' : 'Step 2: Patient details'}</span>
+          <span>{isHindi ? 'मरीज की प्राथमिक जानकारी:' : 'Patient Identification:'}</span>
         </label>
         <div className="p-5 rounded-2xl border border-[#E2E8F4] bg-white shadow-soft space-y-3.5">
           <div>
             <label className="block text-xs font-semibold text-[#1A2B4C] mb-1">
-              {isHindi ? 'मरीज का नाम *' : 'Patient name *'}
+              {isHindi ? 'मरीज का पूरा नाम *' : 'Patient Full Name *'}
             </label>
             <input
-              id="start-name-input"
+              id="patient-name-input"
               type="text"
               value={name}
-              onChange={(e) => { setName(e.target.value); setNameError(''); if (onClearError) onClearError(); }}
+              onChange={(e) => { setName(e.target.value); setNameError(''); }}
               placeholder={isHindi ? 'जैसे: राजेश कुमार' : 'e.g. Ramesh Kumar'}
               className={`w-full px-4 py-2.5 rounded-xl bg-[#F6F9FF] border text-[#1A2B4C] text-xs focus:outline-none focus:border-[#2F6FED] ${
                 nameError ? 'border-[#E5484D]' : 'border-[#E2E8F4]'
@@ -927,12 +1000,13 @@ function StartIntakeScreen({ onStart, loading, error, onClearError, initialLangu
             />
             {nameError && <p className="text-[11px] text-[#E5484D] mt-1 font-medium">{nameError}</p>}
           </div>
+
           <div>
             <label className="block text-xs font-semibold text-[#1A2B4C] mb-1">
               {isHindi ? 'आयु (वर्ष) — वैकल्पिक' : 'Age (years) — optional'}
             </label>
             <input
-              id="start-age-input"
+              id="patient-age-input"
               type="number"
               min="1"
               max="125"
@@ -945,75 +1019,813 @@ function StartIntakeScreen({ onStart, loading, error, onClearError, initialLangu
         </div>
       </div>
 
-      {/* Prominent Error Banner if Start Consultation Fails */}
-      {error && (
-        <div
-          id="intake-start-error-banner"
-          className="max-w-md mx-auto p-4 rounded-2xl border border-[#E5484D]/40 bg-[#FEECEE] text-[#1A2B4C] shadow-sm flex items-start justify-between gap-3 animate-shake"
-        >
-          <div className="flex items-start gap-2.5">
-            <AlertCircle className="w-5 h-5 text-[#E5484D] flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-bold text-[#E5484D]">
-                {isHindi ? 'परामर्श शुरू करने में समस्या आई' : 'Could not start consultation'}
-              </p>
-              <p className="text-xs text-[#6B7A99] mt-0.5 leading-relaxed">{error}</p>
-            </div>
-          </div>
-          {onClearError && (
-            <button
-              type="button"
-              onClick={onClearError}
-              className="p-1 rounded-full text-[#6B7A99] hover:text-[#1A2B4C] hover:bg-white transition flex-shrink-0"
-              title="Dismiss error"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Immediate Thinking... Indicator */}
-      {loading && (
-        <div
-          id="intake-start-thinking-banner"
-          className="max-w-md mx-auto p-3.5 rounded-2xl bg-[#EAF1FF] border border-[#2F6FED]/30 text-[#2F6FED] flex items-center justify-center gap-2.5 shadow-xs animate-pulse"
-        >
-          <Sparkles className="w-4 h-4 animate-spin text-[#2F6FED] flex-shrink-0" />
-          <div className="text-xs font-semibold">
-            <span>{isHindi ? 'सोच रहे हैं... (Thinking...)' : 'Thinking... '}</span>
-            <span className="text-[#6B7A99] font-normal">
-              {isHindi ? 'क्लिनिकल एआई प्री-कंसल्टेशन तैयार कर रहा है...' : 'Initializing clinical AI session...'}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Touch to Begin CTA Button */}
+      {/* CTA Button */}
       <div className="pt-2 max-w-md mx-auto">
         <button
-          id="begin-intake-btn"
+          id="continue-to-consent-btn"
           type="button"
+          onClick={handleProceed}
+          className="w-full py-3.5 px-8 rounded-full bg-[#2F6FED] hover:bg-[#255BC7] text-white font-bold text-sm transition flex items-center justify-center gap-2 shadow-sm"
+        >
+          <span>{isHindi ? 'सहमति स्क्रीन पर आगे बढ़ें' : 'Continue to Consent Step'}</span>
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 2: Patient Consent Screen ───────────────────────────────────────────
+function ConsentStepScreen({
+  patientInfo,
+  language = 'en',
+  onAgreeAndStart,
+  onBack,
+  loading,
+  error,
+}) {
+  const isHindi = language === 'hi';
+  const [agreed, setAgreed] = useState(true);
+
+  const handleAgree = () => {
+    if (!agreed) return;
+    const nowIso = new Date().toISOString();
+    onAgreeAndStart({
+      ...patientInfo,
+      consent_given: true,
+      consent_timestamp: nowIso,
+    });
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto py-4 space-y-6 animate-fade-in">
+      {/* Header */}
+      <div className="text-center space-y-2">
+        <div className="w-14 h-14 rounded-full bg-[#EAF7EE] text-[#2FAE60] flex items-center justify-center mx-auto shadow-sm">
+          <ShieldCheck className="w-7 h-7 text-[#2FAE60]" />
+        </div>
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-[#EAF1FF] text-[#2F6FED]">
+          <Lock className="w-3 h-3" />
+          <span>{isHindi ? 'डेटा गोपनीयता व सुरक्षा' : 'Data Privacy & HIPAA Standards'}</span>
+        </div>
+        <h2 className="text-2xl sm:text-3xl font-extrabold text-[#1A2B4C] tracking-tight">
+          {isHindi ? 'पूर्व-परामर्श डेटा उपयोग व सहमति' : 'Pre-Consultation Consent & Data Use Notice'}
+        </h2>
+        <p className="text-xs sm:text-sm text-[#6B7A99] max-w-lg mx-auto">
+          {isHindi
+            ? 'कृपया नीचे दिए गए डेटा उपयोग विवरण को पढ़ें। परामर्श शुरू करने से पहले आपकी सहमति आवश्यक है।'
+            : 'Please review how your clinical data is used. PreDoc requires your informed consent before commencing your clinical intake.'}
+        </p>
+      </div>
+
+      {/* Data-Use Statement Card */}
+      <div className="rounded-2xl border border-[#E2E8F4] bg-white p-6 shadow-soft space-y-4">
+        <div className="border-b border-[#E2E8F4] pb-3">
+          <h3 className="text-sm font-bold text-[#1A2B4C] flex items-center gap-2">
+            <FileCheck className="w-4 h-4 text-[#2F6FED]" />
+            <span>{isHindi ? 'डेटा उपयोग विवरण (Data Use Statement)' : 'Clinical Data Use Statement'}</span>
+          </h3>
+        </div>
+
+        <div className="space-y-3 text-xs text-[#1A2B4C] leading-relaxed">
+          <div className="flex items-start gap-2.5">
+            <span className="w-5 h-5 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5">
+              1
+            </span>
+            <p>
+              <strong>{isHindi ? 'क्लिनिकल उपयोग:' : 'Direct Clinical Care Purpose:'}</strong>{' '}
+              {isHindi
+                ? 'आपकी आवाज, लक्षण और अपलोड किए गए चिकित्सा दस्तावेज केवल आपके उपस्थित चिकित्सक के लिए एक संरचित पूर्व-परामर्श सारांश तैयार करने के लिए उपयोग किए जाते हैं।'
+                : 'Your symptoms, voice transcriptions, and uploaded medical records are processed solely to prepare a structured pre-consultation summary for your attending physician.'}
+            </p>
+          </div>
+
+          <div className="flex items-start gap-2.5">
+            <span className="w-5 h-5 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5">
+              2
+            </span>
+            <p>
+              <strong>{isHindi ? 'गोपनीयता व एन्क्रिप्शन:' : 'Encryption & Security:'}</strong>{' '}
+              {isHindi
+                ? 'सभी स्वास्थ्य जानकारी एंड-टू-एंड एन्क्रिप्टेड है और सुरक्षित मेडिकल डेटाबेस में संग्रहीत की जाती है।'
+                : 'All health records and audio inputs are encrypted in transit and at rest using healthcare-grade encryption protocols.'}
+            </p>
+          </div>
+
+          <div className="flex items-start gap-2.5">
+            <span className="w-5 h-5 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5">
+              3
+            </span>
+            <p>
+              <strong>{isHindi ? 'तृतीय-पक्ष साझेदारी नहीं:' : 'Zero Third-Party Marketing:'}</strong>{' '}
+              {isHindi
+                ? 'आपकी व्यक्तिगत स्वास्थ्य जानकारी को कभी भी किसी विज्ञापनदाता या अनधिकृत बाहरी संस्था के साथ साझा या बेचा नहीं जाता है।'
+                : 'Your personal health data is strictly confidential and will never be shared, sold, or disclosed to commercial advertisers or unapproved third parties.'}
+            </p>
+          </div>
+
+          <div className="flex items-start gap-2.5">
+            <span className="w-5 h-5 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5">
+              4
+            </span>
+            <p>
+              <strong>{isHindi ? 'मरीज का नियंत्रण:' : 'Patient Right to Review:'}</strong>{' '}
+              {isHindi
+                ? 'आप अपने डॉक्टर से परामर्श के दौरान किसी भी समय अपने उत्तरों की समीक्षा या सुधार कर सकते हैं।'
+                : 'You retain full rights to review, modify, or verify all documented facts directly with your physician during the consultation.'}
+            </p>
+          </div>
+        </div>
+
+        {/* Affirmation Checkbox */}
+        <div className="pt-3 border-t border-[#E2E8F4]">
+          <label className="flex items-center gap-3 p-3.5 rounded-xl border border-[#2F6FED]/30 bg-[#F6F9FF] cursor-pointer hover:bg-[#EAF1FF] transition">
+            <input
+              id="consent-checkbox"
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              className="w-4 h-4 text-[#2F6FED] rounded border-[#E2E8F4] focus:ring-[#2F6FED]"
+            />
+            <span className="text-xs font-semibold text-[#1A2B4C]">
+              {isHindi
+                ? 'मैंने डेटा उपयोग विवरण पढ़ लिया है और मैं नैदानिक पूर्व-परामर्श के लिए सहमति देता/देती हूँ।'
+                : 'I have read the statement and consent to the collection and clinical processing of my health information.'}
+            </span>
+          </label>
+        </div>
+      </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="p-4 rounded-2xl border border-[#E5484D]/40 bg-[#FEECEE] text-[#E5484D] text-xs flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* Action Buttons */}
+      <div className="flex items-center gap-3 pt-2">
+        <button
+          type="button"
+          onClick={onBack}
           disabled={loading}
-          onClick={handleBegin}
-          className="w-full py-4 px-8 rounded-full bg-[#2F6FED] hover:bg-[#255BC7] text-white font-bold text-sm transition flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+          className="px-5 py-3 rounded-full border border-[#E2E8F4] bg-white text-[#6B7A99] hover:text-[#1A2B4C] text-xs font-semibold transition"
+        >
+          {isHindi ? '← वापस' : '← Change Info'}
+        </button>
+
+        <button
+          id="consent-agree-btn"
+          type="button"
+          disabled={!agreed || loading}
+          onClick={handleAgree}
+          className="flex-1 py-3.5 px-8 rounded-full bg-[#2FAE60] hover:bg-[#258d4e] text-white font-bold text-sm transition flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
         >
           {loading ? (
             <>
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span>{isHindi ? 'सोच रहे हैं... (Thinking...)' : 'Thinking... Starting consultation'}</span>
-            </>
-          ) : error ? (
-            <>
-              <span>{isHindi ? 'पुनः प्रयास करें' : 'Retry consultation'}</span>
-              <ChevronRight className="w-5 h-5" />
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>{isHindi ? 'आरंभ हो रहा है...' : 'Starting Consultation...'}</span>
             </>
           ) : (
             <>
-              <span>{isHindi ? 'परामर्श शुरू करने के लिए यहाँ दबाएं' : 'Touch here to begin consultation'}</span>
-              <ChevronRight className="w-5 h-5" />
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{isHindi ? 'मैं सहमत हूँ (I Agree & Begin Intake)' : 'I Agree & Begin Intake'}</span>
+              <ChevronRight className="w-4 h-4" />
             </>
           )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 4: Linear Upload 1-3 Documents Screen ──────────────────────────────
+function UploadDocsLinearScreen({
+  visitId,
+  language = 'en',
+  extractedDocs = [],
+  onDocumentExtracted,
+  onContinue,
+  onSkip,
+}) {
+  const isHindi = language === 'hi';
+  const docCount = extractedDocs.length;
+  const maxReached = docCount >= 3;
+
+  return (
+    <div className="max-w-3xl mx-auto py-4 space-y-6 animate-fade-in">
+      {/* Header */}
+      <div className="text-center space-y-2">
+        <div className="w-14 h-14 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center mx-auto shadow-sm">
+          <Upload className="w-7 h-7 text-[#2F6FED]" />
+        </div>
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[#EAF1FF] text-[#2F6FED]">
+          <FileCheck className="w-3.5 h-3.5" />
+          <span>
+            {isHindi
+              ? `${docCount} / 3 दस्तावेज़ अपलोड किए गए`
+              : `${docCount} of 3 Documents Uploaded`}
+          </span>
+        </div>
+        <h2 className="text-2xl sm:text-3xl font-extrabold text-[#1A2B4C] tracking-tight">
+          {isHindi ? 'चिकित्सा दस्तावेज़ अपलोड करें (1-3)' : 'Upload Medical Documents (1 to 3)'}
+        </h2>
+        <p className="text-xs sm:text-sm text-[#6B7A99] max-w-lg mx-auto">
+          {isHindi
+            ? 'पूर्व नुस्खे (Prescriptions), जांच रिपोर्ट (Lab Tests) या डिस्चार्ज सारांश अपलोड करें ताकि एआई दवाओं और इतिहास का विश्लेषण कर सके।'
+            : 'Upload previous prescriptions, diagnostic lab reports, or discharge summaries so Clinical AI can extract medications, tests, and medical history.'}
+        </p>
+      </div>
+
+      {/* Embedded Uploader */}
+      <div className="rounded-2xl border border-[#E2E8F4] bg-white p-6 shadow-soft space-y-4">
+        <DocumentUpload
+          visitId={visitId}
+          language={language}
+          onDocumentExtracted={onDocumentExtracted}
+          extractedDocs={extractedDocs}
+        />
+        {maxReached && (
+          <p className="text-xs text-[#2FAE60] font-semibold text-center mt-2">
+            ✓ {isHindi ? 'अधिकतम 3 दस्तावेज़ अपलोड हो चुके हैं।' : 'Maximum 3 documents uploaded.'}
+          </p>
+        )}
+      </div>
+
+      {/* Navigation Footer */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+        <button
+          type="button"
+          onClick={onSkip}
+          className="text-xs text-[#6B7A99] hover:text-[#2F6FED] underline font-medium"
+        >
+          {isHindi ? 'कोई दस्तावेज़ नहीं है? आगे बढ़ें (छोड़ें) →' : 'No documents to upload? Skip this step →'}
+        </button>
+
+        <button
+          id="proceed-to-ai-extraction-btn"
+          type="button"
+          onClick={onContinue}
+          className="w-full sm:w-auto px-8 py-3.5 rounded-full bg-[#2F6FED] hover:bg-[#255BC7] text-white font-bold text-xs transition flex items-center justify-center gap-2 shadow-sm"
+        >
+          <span>
+            {docCount > 0
+              ? (isHindi ? 'एआई विश्लेषण पर आगे बढ़ें (Step 5) →' : 'Proceed to AI Extraction (Step 5) →')
+              : (isHindi ? 'आगे बढ़ें (दस्तावेज़ के बिना) →' : 'Continue Without Documents →')}
+          </span>
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 5: Linear AI Extraction Review Screen ──────────────────────────────
+function AIExtractionLinearScreen({
+  extractedDocs = [],
+  language = 'en',
+  patient,
+  onContinue,
+}) {
+  const isHindi = language === 'hi';
+
+  const allMedications = [];
+  const allDiagnoses = [];
+  const allInvestigations = [];
+
+  extractedDocs.forEach((doc, dIdx) => {
+    const ext = doc.extracted || doc.extracted_json || {};
+    const docId = doc.id || doc.document_id || dIdx + 1;
+    (ext.drug_names || []).forEach(d => {
+      allMedications.push({
+        name: typeof d === 'string' ? d : d.name,
+        dosage: typeof d === 'object' ? d.dosage : '',
+        frequency: typeof d === 'object' ? d.frequency : '',
+        docId,
+      });
+    });
+    (ext.diagnoses || []).forEach(diag => {
+      allDiagnoses.push({
+        name: typeof diag === 'string' ? diag : diag.name || diag.diagnosis,
+        docId,
+      });
+    });
+    (ext.investigations || ext.lab_results || []).forEach(inv => {
+      allInvestigations.push({
+        test: typeof inv === 'string' ? inv : inv.test || inv.name,
+        value: typeof inv === 'object' ? inv.value || inv.result : '',
+        docId,
+      });
+    });
+  });
+
+  return (
+    <div className="max-w-3xl mx-auto py-4 space-y-6 animate-fade-in">
+      {/* Header */}
+      <div className="text-center space-y-2">
+        <div className="w-14 h-14 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center mx-auto shadow-sm">
+          <Sparkles className="w-7 h-7 text-[#2F6FED]" />
+        </div>
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#EAF7EE] text-[#2FAE60]">
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          <span>{isHindi ? 'क्लिनिकल एआई निष्कर्षण पूर्ण' : 'Clinical AI Extraction Complete'}</span>
+        </div>
+        <h2 className="text-2xl sm:text-3xl font-extrabold text-[#1A2B4C] tracking-tight">
+          {isHindi ? 'एआई निष्कर्षण व सारांश' : 'AI Extraction Results'}
+        </h2>
+        <p className="text-xs sm:text-sm text-[#6B7A99] max-w-lg mx-auto">
+          {isHindi
+            ? 'अपलोड किए गए दस्तावेज़ों से निकाली गई महत्वपूर्ण दवाएं, जांच और निदान देखें।'
+            : 'Review structured medications, diagnoses, and lab tests automatically parsed from your uploaded documents.'}
+        </p>
+      </div>
+
+      {/* Extracted Details Grid */}
+      <div className="space-y-4">
+        {extractedDocs.length === 0 ? (
+          <div className="p-8 rounded-2xl border border-[#E2E8F4] bg-white shadow-soft text-center space-y-2">
+            <p className="text-sm font-semibold text-[#1A2B4C]">
+              {isHindi ? 'कोई दस्तावेज़ अपलोड नहीं किया गया था' : 'No Documents Uploaded'}
+            </p>
+            <p className="text-xs text-[#6B7A99]">
+              {isHindi
+                ? 'क्लिनिकल एआई आपके वॉइस/टच साक्षात्कार से सीधे संपूर्ण मेडिकल इतिहास संकलित करेगा।'
+                : 'Clinical AI will construct your structured case summary directly from your voice/touch interview responses.'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Medications */}
+            <div className="p-5 rounded-2xl border border-[#E2E8F4] bg-white shadow-soft space-y-3">
+              <div className="flex items-center gap-2 text-[#2F6FED]">
+                <Pill className="w-4 h-4" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#1A2B4C]">
+                  {isHindi ? 'दवाएं (Medications)' : 'Extracted Medications'}
+                </h3>
+              </div>
+              {allMedications.length === 0 ? (
+                <p className="text-xs text-[#6B7A99] italic">{isHindi ? 'कोई विशिष्ट दवा नहीं मिली' : 'None detected'}</p>
+              ) : (
+                <div className="space-y-2">
+                  {allMedications.map((m, i) => (
+                    <div key={i} className="p-2.5 rounded-xl bg-[#F6F9FF] border border-[#E2E8F4] text-xs">
+                      <div className="font-semibold text-[#1A2B4C]">{m.name}</div>
+                      {(m.dosage || m.frequency) && (
+                        <div className="text-[11px] text-[#6B7A99]">{[m.dosage, m.frequency].filter(Boolean).join(' • ')}</div>
+                      )}
+                      <span className="inline-block mt-1 text-[10px] font-mono text-[#2F6FED] bg-white px-2 py-0.5 rounded border border-[#E2E8F4]">
+                        Document #{m.docId}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Diagnoses */}
+            <div className="p-5 rounded-2xl border border-[#E2E8F4] bg-white shadow-soft space-y-3">
+              <div className="flex items-center gap-2 text-[#2F6FED]">
+                <Activity className="w-4 h-4" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#1A2B4C]">
+                  {isHindi ? 'निदान (Diagnoses)' : 'Diagnoses & Findings'}
+                </h3>
+              </div>
+              {allDiagnoses.length === 0 ? (
+                <p className="text-xs text-[#6B7A99] italic">{isHindi ? 'कोई पूर्व निदान नहीं मिला' : 'None detected'}</p>
+              ) : (
+                <div className="space-y-2">
+                  {allDiagnoses.map((d, i) => (
+                    <div key={i} className="p-2.5 rounded-xl bg-[#F6F9FF] border border-[#E2E8F4] text-xs">
+                      <div className="font-semibold text-[#1A2B4C]">{d.name}</div>
+                      <span className="inline-block mt-1 text-[10px] font-mono text-[#2F6FED] bg-white px-2 py-0.5 rounded border border-[#E2E8F4]">
+                        Document #{d.docId}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Investigations */}
+            <div className="p-5 rounded-2xl border border-[#E2E8F4] bg-white shadow-soft space-y-3">
+              <div className="flex items-center gap-2 text-[#2F6FED]">
+                <FileText className="w-4 h-4" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#1A2B4C]">
+                  {isHindi ? 'जांच (Investigations)' : 'Investigations & Labs'}
+                </h3>
+              </div>
+              {allInvestigations.length === 0 ? (
+                <p className="text-xs text-[#6B7A99] italic">{isHindi ? 'कोई जांच विवरण नहीं मिला' : 'None detected'}</p>
+              ) : (
+                <div className="space-y-2">
+                  {allInvestigations.map((inv, i) => (
+                    <div key={i} className="p-2.5 rounded-xl bg-[#F6F9FF] border border-[#E2E8F4] text-xs">
+                      <div className="font-semibold text-[#1A2B4C]">{inv.test}</div>
+                      {inv.value && <div className="text-[11px] text-[#6B7A99]">{inv.value}</div>}
+                      <span className="inline-block mt-1 text-[10px] font-mono text-[#2F6FED] bg-white px-2 py-0.5 rounded border border-[#E2E8F4]">
+                        Document #{inv.docId}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* CTA Button */}
+      <div className="pt-3 text-center">
+        <button
+          id="proceed-to-structured-history-btn"
+          type="button"
+          onClick={onContinue}
+          className="px-8 py-3.5 rounded-full bg-[#2F6FED] hover:bg-[#255BC7] text-white font-bold text-xs transition inline-flex items-center gap-2 shadow-sm"
+        >
+          <span>{isHindi ? 'संरचित इतिहास देखें (Step 6) →' : 'View Structured History (Step 6) →'}</span>
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 6A: Patient-Friendly Confirmation Screen (Patient View only) ─────────
+function PatientConfirmationScreen({
+  patient,
+  language = 'en',
+  turns = [],
+  extractedDocs = [],
+  urgencyFlag,
+  urgencyDept,
+  onRestart,
+}) {
+  const isHindi = language === 'hi';
+  const [confirmed, setConfirmed] = React.useState(false);
+
+  // Map step keys to friendly plain-language labels
+  const FRIENDLY_LABELS = {
+    chief_complaint:     { en: 'Why you came in today',    hi: 'आज आने का कारण' },
+    duration:            { en: 'Since when',               hi: 'कब से' },
+    associated_symptoms: { en: 'Other symptoms',           hi: 'अन्य लक्षण' },
+    past_history:        { en: 'Past medical conditions',  hi: 'पुरानी बीमारी' },
+    medications:         { en: 'Current medicines',        hi: 'वर्तमान दवाएं' },
+    allergies:           { en: 'Allergies',                hi: 'एलर्जी' },
+  };
+
+  const completedTurns = turns.filter(t => t.transcript && t.transcript !== '[inaudible]');
+
+  if (confirmed) {
+    return (
+      <div className="max-w-xl mx-auto py-12 flex flex-col items-center text-center space-y-6 animate-fade-in">
+        <div className="w-24 h-24 rounded-full bg-[#EAF7EE] flex items-center justify-center shadow-sm">
+          <CheckCircle2 className="w-12 h-12 text-[#2FAE60]" />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-extrabold text-[#1A2B4C]">
+            {isHindi ? 'धन्यवाद!' : 'Thank you!'}
+          </h2>
+          <p className="text-sm text-[#6B7A99] leading-relaxed max-w-sm">
+            {isHindi
+              ? 'आपकी जानकारी सफलतापूर्वक सहेजी गई है। आपका डॉक्टर अब इसकी समीक्षा करेगा।'
+              : 'Your information has been submitted. Your doctor will review it before your visit.'}
+          </p>
+        </div>
+        {urgencyFlag && (
+          <div className="p-4 rounded-2xl border border-[#E5484D]/30 bg-[#FEECEE] text-[#E5484D] text-sm font-semibold text-center w-full">
+            {isHindi
+              ? `⚠️ आपके लक्षण तुरंत ध्यान देने योग्य हैं। कृपया ${urgencyDept || 'Emergency'} विभाग में जाएं।`
+              : `⚠️ Your symptoms may need prompt attention. Please inform the ${urgencyDept || 'Emergency'} department.`}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={onRestart}
+          className="px-6 py-3 rounded-full border border-[#E2E8F4] bg-white text-[#6B7A99] hover:text-[#1A2B4C] text-xs font-semibold transition flex items-center gap-2 shadow-soft"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          <span>{isHindi ? 'नया सेशन शुरू करें' : 'Start a new session'}</span>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto py-4 space-y-5 animate-fade-in">
+      {/* Header */}
+      <div className="text-center space-y-2.5">
+        <div className="w-14 h-14 rounded-full bg-[#EAF7EE] flex items-center justify-center mx-auto shadow-sm">
+          <CheckCircle2 className="w-7 h-7 text-[#2FAE60]" />
+        </div>
+        <h2 className="text-2xl font-extrabold text-[#1A2B4C]">
+          {isHindi ? "आपका इंटेक पूरा हो गया!" : "Here's what we captured for your doctor"}
+        </h2>
+        <p className="text-sm text-[#6B7A99]">
+          {isHindi
+            ? 'कृपया एक बार जांच लें कि सभी जानकारी सही है।'
+            : 'Please review to make sure everything looks right before you hand off to your doctor.'}
+        </p>
+      </div>
+
+      {/* Consent badge */}
+      <div className="flex justify-center">
+        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#EAF7EE] text-[#2FAE60] text-xs font-semibold border border-[#2FAE60]/20 shadow-xs">
+          <ShieldCheck className="w-4 h-4" />
+          {isHindi ? 'सहमति सत्यापित' : 'Consent Verified'}
+        </span>
+      </div>
+
+      {/* Urgent notice for patient */}
+      {urgencyFlag && (
+        <div className="p-4 rounded-2xl border border-[#E5484D]/30 bg-[#FEECEE] text-[#E5484D] flex items-start gap-3">
+          <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <p className="text-sm font-semibold">
+            {isHindi
+              ? `आपके लक्षण तुरंत ध्यान देने योग्य हैं। कृपया ${urgencyDept || 'Emergency'} विभाग को सूचित करें।`
+              : `Your symptoms may need prompt attention. Please let the ${urgencyDept || 'Emergency'} department know.`}
+          </p>
+        </div>
+      )}
+
+      {/* Patient-friendly Q&A summary */}
+      <div className="rounded-2xl border border-[#E2E8F4] bg-white shadow-soft divide-y divide-[#E2E8F4] overflow-hidden">
+        {completedTurns.length === 0 ? (
+          <p className="p-5 text-sm text-[#6B7A99] italic text-center">
+            {isHindi ? 'कोई उत्तर दर्ज नहीं हुआ।' : 'No answers recorded.'}
+          </p>
+        ) : (
+          completedTurns.map((turn, i) => (
+            <div key={turn.id || i} className="p-4 flex items-start gap-3">
+              <div className="w-7 h-7 rounded-full bg-[#EAF1FF] flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span className="text-xs font-bold text-[#2F6FED]">{i + 1}</span>
+              </div>
+              <div className="flex-1 space-y-0.5">
+                <p className="text-[11px] font-bold text-[#6B7A99] uppercase tracking-wider">
+                  {FRIENDLY_LABELS[turn.step]?.[language] || (STEP_LABELS[turn.step]?.[language] || turn.step)}
+                </p>
+                <p className="text-sm text-[#1A2B4C] leading-relaxed">{turn.transcript}</p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Documents uploaded */}
+      {extractedDocs.length > 0 && (
+        <div className="p-4 rounded-2xl border border-[#E2E8F4] bg-white shadow-soft flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-[#EAF1FF] flex items-center justify-center flex-shrink-0">
+            <FileCheck className="w-5 h-5 text-[#2F6FED]" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-[#1A2B4C]">
+              {extractedDocs.length} {extractedDocs.length === 1 ? (isHindi ? 'दस्तावेज़' : 'document') : (isHindi ? 'दस्तावेज़' : 'documents')} {isHindi ? 'अपलोड किए गए' : 'uploaded'}
+            </p>
+            <p className="text-xs text-[#6B7A99]">
+              {isHindi ? 'डॉक्टर इन्हें देख पाएंगे।' : 'Your doctor will be able to see these.'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm / Restart buttons */}
+      <div className="flex flex-col sm:flex-row gap-3 pt-2">
+        <button
+          id="patient-confirm-btn"
+          type="button"
+          onClick={() => setConfirmed(true)}
+          className="flex-1 px-6 py-3.5 rounded-full bg-[#2FAE60] hover:bg-[#259c55] text-white text-sm font-bold transition flex items-center justify-center gap-2 shadow-sm"
+        >
+          <CheckCircle2 className="w-5 h-5" />
+          <span>{isHindi ? 'यह सही लग रहा है ✓' : 'This looks correct ✓'}</span>
+        </button>
+        <button
+          id="patient-restart-btn"
+          type="button"
+          onClick={onRestart}
+          className="flex-1 px-6 py-3.5 rounded-full border border-[#E2E8F4] bg-white text-[#6B7A99] hover:text-[#E5484D] hover:border-[#E5484D]/30 text-sm font-semibold transition flex items-center justify-center gap-2"
+        >
+          <RotateCcw className="w-4 h-4" />
+          <span>{isHindi ? 'कुछ गलत है — फिर से शुरू करें' : "Something's wrong — restart"}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 6B: Clinical Structured History Screen (Doctor-accessible view) ───────
+function StructuredHistoryScreen({
+  patient,
+  visitId,
+  consentTimestamp,
+  language = 'en',
+  turns = [],
+  extractedDocs = [],
+  urgencyFlag,
+  urgencyDept,
+  urgencyReason,
+  onViewCaseDraft,
+  onRestart,
+  isPatientView = false,
+}) {
+  // In patient view, delegate to the patient-friendly confirmation screen
+  if (isPatientView) {
+    return (
+      <PatientConfirmationScreen
+        patient={patient}
+        language={language}
+        turns={turns}
+        extractedDocs={extractedDocs}
+        urgencyFlag={urgencyFlag}
+        urgencyDept={urgencyDept}
+        onRestart={onRestart}
+      />
+    );
+  }
+  const isHindi = language === 'hi';
+  const completedTurns = turns.filter(t => t.transcript && t.transcript !== '[inaudible]');
+
+  const formattedTimestamp = consentTimestamp
+    ? new Date(consentTimestamp).toLocaleString()
+    : new Date().toLocaleString();
+
+  return (
+    <div className="max-w-3xl mx-auto py-4 space-y-6 animate-fade-in">
+      {/* Patient Header & Consent Verified Badge */}
+      <div className="p-6 rounded-2xl border border-[#E2E8F4] bg-white shadow-soft space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#E2E8F4]">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center font-bold text-base">
+              {patient?.name ? patient.name.charAt(0).toUpperCase() : 'P'}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-[#1A2B4C]">{patient?.name || 'Patient'}</h2>
+                <span className="font-mono text-xs px-2.5 py-0.5 rounded-full bg-[#EAF1FF] text-[#2F6FED]">
+                  Visit #{visitId}
+                </span>
+              </div>
+              <p className="text-xs text-[#6B7A99]">
+                {patient?.age ? `${patient.age} yrs` : 'Age pending'} • {language === 'hi' ? 'हिंदी' : 'English'}
+              </p>
+            </div>
+          </div>
+
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#EAF7EE] text-[#2FAE60] text-xs font-semibold self-start sm:self-auto shadow-xs border border-[#2FAE60]/20">
+            <ShieldCheck className="w-4 h-4 text-[#2FAE60]" />
+            <span>Consent Verified • {formattedTimestamp}</span>
+          </div>
+        </div>
+
+        {/* Quick summary counters */}
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div className="p-3 rounded-xl bg-[#F6F9FF] border border-[#E2E8F4]">
+            <div className="text-lg font-bold text-[#1A2B4C]">{completedTurns.length}</div>
+            <div className="text-[11px] text-[#6B7A99]">Interview Turns</div>
+          </div>
+          <div className="p-3 rounded-xl bg-[#F6F9FF] border border-[#E2E8F4]">
+            <div className="text-lg font-bold text-[#1A2B4C]">{extractedDocs.length}</div>
+            <div className="text-[11px] text-[#6B7A99]">Documents Parsed</div>
+          </div>
+          <div className="p-3 rounded-xl bg-[#F6F9FF] border border-[#E2E8F4]">
+            <div className={`text-lg font-bold ${urgencyFlag ? 'text-[#E5484D]' : 'text-[#2FAE60]'}`}>
+              {urgencyFlag ? 'Urgent' : 'Routine'}
+            </div>
+            <div className="text-[11px] text-[#6B7A99]">Triage Status</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Red-Flag Urgent Callout (if active) */}
+      {urgencyFlag && (
+        <div className="p-4 rounded-2xl border border-[#E5484D]/30 bg-[#FEECEE] text-[#E5484D] flex items-start gap-3 shadow-sm">
+          <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <div>
+            <span className="font-bold text-xs">
+              Urgent Clinical Alert: Attention Recommended ({urgencyDept || 'Emergency'})
+            </span>
+            {urgencyReason && (
+              <p className="text-xs text-[#E5484D]/90 mt-0.5">{urgencyReason}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Primary CTA: Generate & View 8-Section Case Draft */}
+      <div className="p-6 rounded-2xl border border-[#2F6FED]/30 bg-[#EAF1FF] flex flex-col sm:flex-row items-center justify-between gap-4 shadow-soft">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-full bg-[#2F6FED] text-white flex items-center justify-center flex-shrink-0 shadow-sm">
+            <Sparkles className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-[#1A2B4C]">
+              {isHindi ? 'डॉक्टर का केस ड्राफ्ट तैयार करें (8 सेक्शन)' : 'Synthesize Doctor Case Draft (8 Sections)'}
+            </h3>
+            <p className="text-xs text-[#6B7A99]">
+              {isHindi
+                ? 'चीफ कम्प्लेंट्स, HPI, इतिहास, दवाएं, एलर्जी, जांच, टाइमलाइन और रेड फ्लैग्स सहित पूर्ण सारांश देखें।'
+                : 'Generates structured 8-section clinical synthesis with grounded Transcript and Document tags.'}
+            </p>
+          </div>
+        </div>
+        <button
+          id="view-case-draft-btn"
+          type="button"
+          onClick={() => {
+            if (onViewCaseDraft) {
+              onViewCaseDraft(visitId);
+            } else {
+              window.location.href = `/case/${visitId}`;
+            }
+          }}
+          className="px-6 py-3.5 rounded-full bg-[#2F6FED] hover:bg-[#255BC7] text-white text-xs font-bold transition flex items-center gap-2 shadow-sm whitespace-nowrap"
+        >
+          <Sparkles className="w-4 h-4" />
+          <span>{isHindi ? 'केस ड्राफ्ट देखें →' : 'View Case Draft (8 Sections) →'}</span>
+        </button>
+      </div>
+
+      {/* Section 1: Structured Interview Responses with Transcript #ID tags */}
+      <div className="rounded-2xl border border-[#E2E8F4] bg-white p-6 shadow-soft space-y-4">
+        <div className="flex items-center justify-between border-b border-[#E2E8F4] pb-3">
+          <h3 className="text-sm font-bold text-[#1A2B4C] flex items-center gap-2">
+            <Mic className="w-4 h-4 text-[#2F6FED]" />
+            <span>{isHindi ? 'साक्षात्कार प्रश्न व उत्तर' : 'Voice/Touch Clinical Interview Turns'}</span>
+          </h3>
+          <span className="text-xs text-[#6B7A99] font-medium">{completedTurns.length} turns</span>
+        </div>
+
+        <div className="space-y-2.5">
+          {completedTurns.length === 0 ? (
+            <p className="text-xs text-[#6B7A99] italic">{isHindi ? 'कोई उत्तर दर्ज नहीं हुआ।' : 'No interview turns recorded.'}</p>
+          ) : (
+            completedTurns.map((turn, i) => (
+              <div key={turn.id || i} className="p-3.5 rounded-xl border border-[#E2E8F4] bg-[#F6F9FF] flex items-start justify-between gap-3 text-xs">
+                <div className="space-y-1 flex-1">
+                  <span className="text-[11px] font-bold text-[#2F6FED] uppercase tracking-wider block">
+                    {STEP_LABELS[turn.step]?.[language] || turn.step}
+                  </span>
+                  <p className="text-[#1A2B4C] font-medium leading-relaxed">{turn.transcript}</p>
+                </div>
+                <span className="text-[10px] font-mono font-semibold text-[#2F6FED] bg-white px-2.5 py-0.5 rounded-full border border-[#E2E8F4] flex-shrink-0">
+                  Transcript #{turn.id || i + 1}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Section 2: Uploaded Documents with Document #ID tags */}
+      {extractedDocs.length > 0 && (
+        <div className="rounded-2xl border border-[#E2E8F4] bg-white p-6 shadow-soft space-y-4">
+          <div className="flex items-center justify-between border-b border-[#E2E8F4] pb-3">
+            <h3 className="text-sm font-bold text-[#1A2B4C] flex items-center gap-2">
+              <FileCheck className="w-4 h-4 text-[#2F6FED]" />
+              <span>{isHindi ? 'अपलोड किए गए चिकित्सा दस्तावेज़' : 'Extracted Medical Documents'}</span>
+            </h3>
+            <span className="text-xs text-[#6B7A99] font-medium">{extractedDocs.length} documents</span>
+          </div>
+
+          <div className="space-y-3">
+            {extractedDocs.map((doc, idx) => (
+              <div key={doc.id || idx} className="p-4 rounded-xl border border-[#E2E8F4] bg-[#F6F9FF] space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[#1A2B4C]">{doc.filename || `Document ${idx + 1}`}</span>
+                  <span className="text-[10px] font-mono font-semibold text-[#2F6FED] bg-white px-2.5 py-0.5 rounded-full border border-[#E2E8F4]">
+                    Document #{doc.id || doc.document_id || idx + 1}
+                  </span>
+                </div>
+                <div className="text-[11px] text-[#6B7A99]">
+                  {doc.date && <span className="mr-3">Date: {doc.date}</span>}
+                  {doc.doctor_name && <span>Doctor: {doc.doctor_name}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Section 3: Interactive Medical Timeline */}
+      {extractedDocs.length > 0 && (
+        <div className="rounded-2xl border border-[#E2E8F4] bg-white p-6 shadow-soft space-y-4">
+          <h3 className="text-sm font-bold text-[#1A2B4C] flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-[#2F6FED]" />
+            <span>{isHindi ? 'कालानुक्रमिक दस्तावेज़ समयरेखा' : 'Chronological Document Timeline'}</span>
+          </h3>
+          <MedicalTimeline documents={extractedDocs} />
+        </div>
+      )}
+
+      {/* Restart / New Session Button */}
+      <div className="flex justify-end pt-2">
+        <button
+          type="button"
+          onClick={onRestart}
+          className="px-5 py-2.5 rounded-full border border-[#E2E8F4] bg-white text-[#6B7A99] hover:text-[#1A2B4C] text-xs font-semibold transition flex items-center gap-2"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          <span>{isHindi ? 'नया सेशन शुरू करें' : 'Start New Intake'}</span>
         </button>
       </div>
     </div>
@@ -1319,15 +2131,36 @@ function CompletionCard({
 }
 
 // ─── Main IntakeFlow Component ────────────────────────────────────────────────
-export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
-  const [activeTab, setActiveTab] = useState('interview');
-  const [language, setLanguage] = useState('en');
-  const [mode, setMode] = useState('speak');
-  const [patient, setPatient] = useState(null);
-  const [visitId, setVisitId] = useState(null);
+export default function IntakeFlow({
+  onViewCaseDraft,
+  onNavigateTriage,
+  isPatientView = false,
+  onKioskReset,
+  initialPatient = null,
+  initialPatientToken = null,
+  initialPin = null,
+  isReturningPatient = false,
+}) {
+  const [linearStage, setLinearStage] = useState(isReturningPatient ? 'consent' : 'language_patient');
+  const [pendingPatientInfo, setPendingPatientInfo] = useState({
+    name: initialPatient?.name || '',
+    age: initialPatient?.age || 35,
+    lang: initialPatient?.language || 'en',
+  });
+  const [consentTimestamp, setConsentTimestamp] = useState(null);
 
-  // currentStepIndex: -1 = Intro Step (Name & Age), 0..5 = Clinical Script Steps
-  const [currentStepIndex, setCurrentStepIndex] = useState(-1);
+  const [language, setLanguage] = useState(initialPatient?.language || 'en');
+  const [mode, setMode] = useState('speak');
+  const [patient, setPatient] = useState(initialPatient || null);
+  const [visitId, setVisitId] = useState(null);
+  const [patientToken, setPatientToken] = useState(
+    initialPatientToken || sessionStorage.getItem('predoc_patient_token') || null
+  );
+  const [assignedCode, setAssignedCode] = useState(initialPatient?.patient_code || null);
+  const [assignedPin, setAssignedPin] = useState(initialPin || null);
+
+  // currentStepIndex: 0..5 = Clinical Script Steps (Chief Complaint to Allergies)
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [turns, setTurns] = useState([]);
   const [currentPrompt, setCurrentPrompt] = useState('');
   const [isComplete, setIsComplete] = useState(false);
@@ -1356,21 +2189,43 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
   const recordingTimerRef = useRef(null);
   const isHoldPressRef = useRef(false);
 
-  const isIntroStep = currentStepIndex === -1;
-  const currentStep = !isIntroStep && CLINICAL_STEPS[currentStepIndex] ? CLINICAL_STEPS[currentStepIndex] : 'chief_complaint';
+  const isIntroStep = false;
+  const currentStep = CLINICAL_STEPS[currentStepIndex] || 'chief_complaint';
 
-  const handleStartIntake = async ({ name, age, lang }) => {
+  const handlePatientInfoContinue = ({ name, age, lang }) => {
+    setPendingPatientInfo({ name, age, lang });
+    setLanguage(lang || 'en');
+    setLinearStage('consent');
+  };
+
+  const handleStartIntake = async ({ name, age, lang, consent_given = true, consent_timestamp }) => {
+    const timestamp = consent_timestamp || new Date().toISOString();
+    const effectiveName = name || initialPatient?.name || 'Patient';
+    const effectiveAge = age || initialPatient?.age || 35;
+    const effectiveLang = lang || language || 'en';
+
+    const reqPayload = {
+      patient_name: effectiveName,
+      patient_age: effectiveAge,
+      language: effectiveLang,
+      consent_given: true,
+      consent_timestamp: timestamp,
+    };
+
+    if (isReturningPatient || (initialPatient?.patient_code && (initialPin || assignedPin))) {
+      reqPayload.patient_code = initialPatient?.patient_code || assignedCode;
+      reqPayload.pin = initialPin || assignedPin;
+    }
+
     console.log('[IntakeFlow] Sending /api/intake/start request:', {
       endpoint: `${API_BASE}/intake/start`,
-      patient_name: name || 'Patient',
-      patient_age: age || 35,
-      language: lang || 'en',
+      ...reqPayload,
     });
     setIsProcessing(true);
     setError(null);
     setInaudibleNotice(null);
     setRetryCount(0);
-    setLanguage(lang || 'en');
+    setLanguage(effectiveLang);
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
@@ -1378,11 +2233,7 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
       const res = await fetch(`${API_BASE}/intake/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          patient_name: name || 'Patient',
-          patient_age: age || 35,
-          language: lang || 'en',
-        }),
+        body: JSON.stringify(reqPayload),
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
@@ -1395,19 +2246,25 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
       const data = await res.json();
       console.log('[IntakeFlow] Received /api/intake/start success response:', data);
 
+      if (data.patient_token) {
+        setPatientToken(data.patient_token);
+        sessionStorage.setItem('predoc_patient_token', data.patient_token);
+      }
+
       setPatient({
         id: data.patient_id,
-        name: name || 'Patient',
-        age: age || 35,
-        language: lang || 'en',
+        patient_code: data.patient_code,
+        name: effectiveName,
+        age: effectiveAge,
+        language: effectiveLang,
       });
       setVisitId(data.visit_id);
+      setConsentTimestamp(timestamp);
       setCurrentPrompt(
         data.first_question ||
-        (lang === 'hi' ? 'आज आपको क्या परेशानी है?' : 'What symptoms are you experiencing today?')
+        (effectiveLang === 'hi' ? 'आज आपको क्या परेशानी है?' : 'What symptoms are you experiencing today?')
       );
-      // Begin with the intro step (Name & Age collection)
-      setCurrentStepIndex(-1);
+      setCurrentStepIndex(0);
       setTurns([]);
       setIsComplete(false);
       setUrgencyFlag(false);
@@ -1418,6 +2275,15 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
       }
       if (data.input_type) {
         setCurrentInputType(data.input_type);
+      }
+
+      // If new patient with code & pin, show PatientIDCard first
+      if (!data.is_returning && data.pin) {
+        setAssignedCode(data.patient_code);
+        setAssignedPin(data.pin);
+        setLinearStage('patient_id_card');
+      } else {
+        setLinearStage('interview');
       }
     } catch (err) {
       console.error('[IntakeFlow] /api/intake/start request error:', err);
@@ -1439,9 +2305,13 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
     setInaudibleNotice(null);
 
     try {
+      const token = patientToken || sessionStorage.getItem('predoc_patient_token');
       const res = await fetch(`${API_BASE}/intake/patient/${visitId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           name: name || 'Patient',
           age: age || 35,
@@ -1628,8 +2498,15 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
         formData.append('client_transcript', fallbackClientTranscript.trim());
       }
 
+      const token = patientToken || sessionStorage.getItem('predoc_patient_token');
+      const headers = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const res = await fetch(`${API_BASE}/intake/respond`, {
         method: 'POST',
+        headers,
         body: formData,
       });
 
@@ -1647,6 +2524,7 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
           ]);
           if (currentStepIndex >= CLINICAL_STEPS.length - 1) {
             setIsComplete(true);
+            setLinearStage('upload_docs');
           } else {
             setCurrentStepIndex(prev => prev + 1);
             setCurrentPrompt('');
@@ -1672,6 +2550,7 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
           ]);
           if (currentStepIndex >= CLINICAL_STEPS.length - 1) {
             setIsComplete(true);
+            setLinearStage('upload_docs');
           } else {
             setCurrentStepIndex(prev => prev + 1);
             setCurrentPrompt(data.next_question || data.next_prompt || '');
@@ -1708,6 +2587,7 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
 
       if (data.is_complete || currentStepIndex >= CLINICAL_STEPS.length - 1) {
         setIsComplete(true);
+        setLinearStage('upload_docs');
       } else {
         setCurrentStepIndex(prev => prev + 1);
         setCurrentPrompt(data.next_question || data.next_prompt || '');
@@ -1731,6 +2611,7 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
         ]);
         if (currentStepIndex >= CLINICAL_STEPS.length - 1) {
           setIsComplete(true);
+          setLinearStage('upload_docs');
         } else {
           setCurrentStepIndex(prev => prev + 1);
           setCurrentPrompt('');
@@ -1926,16 +2807,23 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
 
   const handleRestart = () => {
     handleCancelRecording();
+    setLinearStage('language_patient');
+    setPendingPatientInfo({ name: '', age: 35, lang: language || 'en' });
+    setConsentTimestamp(null);
     setPatient(null);
     setVisitId(null);
     setTurns([]);
-    setCurrentStepIndex(-1);
+    setCurrentStepIndex(0);
     setIsComplete(false);
     setUrgencyFlag(false);
+    setUrgencyDept(null);
+    setUrgencyReason(null);
     setInaudibleNotice(null);
     setRetryCount(0);
     setCurrentInputType('options');
     setBackendStepInputTypes({});
+    setExtractedDocs([]);
+    setError(null);
   };
 
   const activeCardRef = useRef(null);
@@ -1949,19 +2837,48 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
 
   return (
     <div className="space-y-6">
-      {!patient && (
-        <div className="rounded-3xl bg-white border border-[#E2E8F4] p-8 shadow-soft">
-          <StartIntakeScreen
-            onStart={handleStartIntake}
-            loading={isProcessing}
-            error={error}
-            onClearError={() => setError(null)}
+      {/* 1. Linear Stepper at top */}
+      <LinearStepper currentStage={linearStage} language={language} />
+
+      {/* Stage 1: Patient Details & Language Selection */}
+      {linearStage === 'language_patient' && (
+        <div className="rounded-3xl bg-white border border-[#E2E8F4] p-6 sm:p-8 shadow-soft">
+          <PatientAndLanguageStep
             initialLanguage={language}
+            initialName={pendingPatientInfo?.name || ''}
+            initialAge={pendingPatientInfo?.age || ''}
+            onContinue={handlePatientInfoContinue}
           />
         </div>
       )}
 
-      {patient && (
+      {/* Stage 2: Informed Consent */}
+      {linearStage === 'consent' && (
+        <div className="rounded-3xl bg-white border border-[#E2E8F4] p-6 sm:p-8 shadow-soft">
+          <ConsentStepScreen
+            patientInfo={pendingPatientInfo || { name: 'Patient', age: 35, lang: language }}
+            language={language}
+            onAgreeAndStart={handleStartIntake}
+            onBack={() => setLinearStage('language_patient')}
+            loading={isProcessing}
+            error={error}
+          />
+        </div>
+      )}
+
+      {/* Stage 2.5: Patient ID Card (New Patient Identity) */}
+      {linearStage === 'patient_id_card' && (
+        <PatientIDCard
+          patientCode={assignedCode}
+          pin={assignedPin}
+          patientName={patient?.name || pendingPatientInfo?.name || 'Patient'}
+          language={language}
+          onContinue={() => setLinearStage('interview')}
+        />
+      )}
+
+      {/* Stage 3: Clinical Voice/Touch Interview */}
+      {linearStage === 'interview' && patient && (
         <div className="rounded-3xl bg-white border border-[#E2E8F4] p-5 shadow-soft space-y-4">
           {/* Active Patient Meta Strip */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#E2E8F4]">
@@ -1972,6 +2889,11 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-base text-[#1A2B4C]">{patient.name}</span>
+                  {patient.patient_code && (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-[#EAF1FF] text-[#2F6FED]">
+                      {patient.patient_code}
+                    </span>
+                  )}
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-[#EAF1FF] text-[#2F6FED]">
                     Visit #{visitId}
                   </span>
@@ -1994,7 +2916,7 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
             </div>
           </div>
 
-          {/* Red-Flag Urgent Banner (Deliberate slide-down motion) */}
+          {/* Red-Flag Urgent Banner */}
           {urgencyFlag && (
             <div
               id="red-flag-live-banner"
@@ -2025,303 +2947,221 @@ export default function IntakeFlow({ onViewCaseDraft, onNavigateTriage }) {
             </div>
           )}
 
-          {/* Subtabs: Clinical Interview vs Document Upload */}
-          <div className="flex items-center gap-2 border-b border-[#E2E8F4] pb-2">
-            <button
-              onClick={() => setActiveTab('interview')}
-              className={`px-4 py-2 rounded-full text-xs font-semibold transition ${
-                activeTab === 'interview'
-                  ? 'bg-[#2F6FED] text-white shadow-sm'
-                  : 'text-[#6B7A99] hover:text-[#1A2B4C] hover:bg-[#EAF1FF]'
-              }`}
-            >
-              Clinical interview
-            </button>
-            <button
-              onClick={() => setActiveTab('documents')}
-              className={`px-4 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5 ${
-                activeTab === 'documents'
-                  ? 'bg-[#2F6FED] text-white shadow-sm'
-                  : 'text-[#6B7A99] hover:text-[#1A2B4C] hover:bg-[#EAF1FF]'
-              }`}
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Upload documents</span>
-              {extractedDocs.length > 0 && (
-                <span className="px-2 py-0.2 rounded-full text-[10px] bg-white text-[#2F6FED]">
-                  {extractedDocs.length}
+          {/* Interview Question & Controls */}
+          <div className="space-y-3">
+            {/* Step Progress Tracker */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-[#6B7A99] font-medium">
+                <span>
+                  {`Question ${currentStepIndex + 1} of ${CLINICAL_STEPS.length}: ${STEP_LABELS[currentStep]?.[language] || currentStep}`}
                 </span>
-              )}
-            </button>
-          </div>
-
-          {/* Subtab: Document Upload */}
-          {activeTab === 'documents' && (
-            <div className="space-y-4">
-              <DocumentUpload
-                visitId={visitId}
-                language={language}
-                onDocumentExtracted={handleDocumentExtracted}
-                extractedDocs={extractedDocs}
-              />
-            </div>
-          )}
-
-          {/* Subtab: Clinical Interview */}
-          {activeTab === 'interview' && (
-            <>
-              {isComplete ? (
-                <CompletionCard
-                  turns={turns}
-                  language={language}
-                  onRestart={handleRestart}
-                  extractedDocs={extractedDocs}
-                  onTabChange={setActiveTab}
-                  visitId={visitId}
-                  onViewCaseDraft={onViewCaseDraft}
-                  urgencyFlag={urgencyFlag}
-                  urgencyDept={urgencyDept}
-                  urgencyReason={urgencyReason}
-                  onNavigateTriage={onNavigateTriage}
+                <span>
+                  {`${Math.round(((currentStepIndex + 1) / CLINICAL_STEPS.length) * 100)}% complete`}
+                </span>
+              </div>
+              <div className="w-full h-2 bg-[#F6F9FF] border border-[#E2E8F4] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[#2F6FED] transition-all duration-300 rounded-full"
+                  style={{
+                    width: `${((currentStepIndex + 1) / CLINICAL_STEPS.length) * 100}%`
+                  }}
                 />
-              ) : (
-                <div className="space-y-3">
-                  {/* Step Progress Tracker */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs text-[#6B7A99] font-medium">
-                      <span>
-                        {isIntroStep
-                          ? (language === 'hi' ? 'प्रारंभिक चरण: मरीज का परिचय (नाम और उम्र)' : 'Intro Step: Patient Information (Name & Age)')
-                          : `Step ${currentStepIndex + 1} of ${CLINICAL_STEPS.length}: ${STEP_LABELS[currentStep]?.[language] || currentStep}`}
+              </div>
+            </div>
+
+            {/* Active Question Card */}
+            <div ref={activeCardRef} className="p-4 sm:p-5 rounded-2xl border border-[#E2E8F4] bg-[#F6F9FF] space-y-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center flex-shrink-0">
+                  <Bot className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-[#2F6FED] block">
+                    {STEP_LABELS[currentStep]?.[language] || currentStep}
+                  </span>
+                  <h3 className="text-base font-bold text-[#1A2B4C] leading-snug">
+                    {currentPrompt || (language === 'hi' ? 'कृपया अपनी समस्या बताएं...' : 'Please describe your symptoms...')}
+                  </h3>
+                </div>
+              </div>
+
+              {/* Immediate Thinking Loading Indicator */}
+              {isProcessing && (
+                <div
+                  id="question-card-thinking-banner"
+                  className="p-3 rounded-2xl border border-[#2F6FED]/30 bg-[#EAF1FF] text-[#1A2B4C] flex items-center justify-between shadow-xs animate-pulse"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Sparkles className="w-4 h-4 text-[#2F6FED] animate-spin flex-shrink-0" />
+                    <div>
+                      <span className="text-xs font-bold text-[#2F6FED]">
+                        {language === 'hi' ? 'सोच रहे हैं... (Thinking...)' : 'Thinking...'}
                       </span>
-                      <span>
-                        {isIntroStep
-                          ? (language === 'hi' ? 'शुरुआत' : 'Intro')
-                          : `${Math.round(((currentStepIndex + 1) / CLINICAL_STEPS.length) * 100)}% complete`}
+                      <span className="text-[11px] text-[#6B7A99] ml-1.5 hidden sm:inline">
+                        {language === 'hi'
+                          ? 'क्लिनिकल एआई आपके विवरण का विश्लेषण कर रहा है...'
+                          : 'Analyzing symptoms with clinical AI...'}
                       </span>
-                    </div>
-                    <div className="w-full h-2 bg-[#F6F9FF] border border-[#E2E8F4] rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-[#2F6FED] transition-all duration-300 rounded-full"
-                        style={{
-                          width: isIntroStep ? '4%' : `${((currentStepIndex + 1) / CLINICAL_STEPS.length) * 100}%`
-                        }}
-                      />
                     </div>
                   </div>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white text-[#2F6FED] border border-[#2F6FED]/20 flex items-center gap-1 shadow-xs">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>AI Active</span>
+                  </span>
+                </div>
+              )}
 
-
-                  {/* Active Question Card */}
-                  <div ref={activeCardRef} className="p-3 rounded-2xl border border-[#E2E8F4] bg-[#F6F9FF] space-y-2">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-7 h-7 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center flex-shrink-0">
-                        <Bot className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-bold text-[#2F6FED] block">
-                          {isIntroStep
-                            ? (language === 'hi' ? 'मरीज का परिचय' : 'Patient Details')
-                            : (STEP_LABELS[currentStep]?.[language] || currentStep)}
-                        </span>
-                        <h3 className="text-base font-bold text-[#1A2B4C] leading-snug">
-                          {isIntroStep
-                            ? (mode === 'speak'
-                                ? (language === 'hi' ? 'कृपया अपना नाम और उम्र बताएं...' : 'What is your name and how old are you?')
-                                : (language === 'hi' ? 'कृपया अपना नाम और उम्र दर्ज करें' : 'Please enter your name and age'))
-                            : (currentPrompt || (language === 'hi' ? 'कृपया अपनी समस्या बताएं...' : 'Please describe your symptoms...'))}
-                        </h3>
-                      </div>
-                    </div>
-
-                    {/* Immediate Thinking... Loading Indicator */}
-                    {isProcessing && (
-                      <div
-                        id="question-card-thinking-banner"
-                        className="p-3 rounded-2xl border border-[#2F6FED]/30 bg-[#EAF1FF] text-[#1A2B4C] flex items-center justify-between shadow-xs animate-pulse"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <Sparkles className="w-4 h-4 text-[#2F6FED] animate-spin flex-shrink-0" />
-                          <div>
-                            <span className="text-xs font-bold text-[#2F6FED]">
-                              {language === 'hi' ? 'सोच रहे हैं... (Thinking...)' : 'Thinking...'}
-                            </span>
-                            <span className="text-[11px] text-[#6B7A99] ml-1.5 hidden sm:inline">
-                              {language === 'hi'
-                                ? 'क्लिनिकल एआई आपके विवरण का विश्लेषण कर रहा है...'
-                                : 'Analyzing symptoms with clinical AI...'}
-                            </span>
-                          </div>
-                        </div>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white text-[#2F6FED] border border-[#2F6FED]/20 flex items-center gap-1 shadow-xs">
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          <span>AI Active</span>
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Inaudible / Unclear Voice Input Notice */}
-                    {inaudibleNotice && (
-                      <div className="p-3.5 rounded-2xl border border-[#F5A623]/30 bg-[#FEF6E9] text-[#1A2B4C] text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 shadow-sm">
-                        <div className="flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 text-[#F5A623] flex-shrink-0" />
-                          <span className="font-semibold text-[#B26B00]">{inaudibleNotice}</span>
-                        </div>
-                        {retryCount >= 3 && (
-                          <button
-                            type="button"
-                            onClick={() => { setMode('tap'); setInaudibleNotice(null); }}
-                            className="px-3 py-1 rounded-full bg-white border border-[#F5A623] text-[#B26B00] hover:bg-[#F5A623] hover:text-white text-[11px] font-bold transition whitespace-nowrap shadow-xs"
-                          >
-                            {language === 'hi' ? 'टैप मोड का उपयोग करें →' : 'Switch to Tap mode →'}
-                          </button>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Step-Specific Input Handling */}
-                    {isIntroStep ? (
-                      <div className="pt-4 border-t border-[#E2E8F4]">
-                        {mode === 'speak' ? (
-                          <div className="pt-2 flex flex-col items-center">
-                            <MicButton
-                              isRecording={isRecording}
-                              isProcessing={isProcessing}
-                              onToggle={handleMicToggle}
-                              onPress={handleMicPress}
-                              onRelease={handleMicRelease}
-                              onCancel={handleCancelRecording}
-                              recordingSeconds={recordingSeconds}
-                              liveTranscript={liveTranscript}
-                              language={language}
-                            />
-                            <p className="text-[11px] text-[#6B7A99] mt-3 text-center">
-                              {language === 'hi'
-                                ? 'उदाहरण: "मेरा नाम राजेश कुमार है और मेरी उम्र 42 साल है"'
-                                : 'e.g. "My name is Ramesh Kumar and I am 42 years old"'}
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => { setMode('tap'); setInaudibleNotice(null); }}
-                              className="mt-4 text-xs text-[#2F6FED] hover:underline flex items-center gap-1 font-medium"
-                            >
-                              <Hand className="w-3.5 h-3.5" />
-                              <span>{language === 'hi' ? 'टाइप करना चाहते हैं? टैप मोड पर जाएं' : 'Prefer typing? Switch to tap mode'}</span>
-                            </button>
-                          </div>
-                        ) : (
-                          <DemographicsStepUI
-                            language={language}
-                            initialName={patient.name}
-                            initialAge={patient.age}
-                            onSave={handleSaveDemographics}
-                            isProcessing={isProcessing}
-                          />
-                        )}
-                      </div>
-                    ) : (
-                      /* Clinical Steps 1 to 6 */
-                      mode === 'speak' ? (
-                        <div className="pt-2 border-t border-[#E2E8F4] flex flex-col items-center">
-                          {/* For yes-no, chips-and-text, or text type steps, show tap controls so user isn't stuck with only mic */}
-                          {TAP_STEPS[currentStep]?.type?.startsWith('yes-no') ||
-                          TAP_STEPS[currentStep]?.type === 'chips-and-text' ||
-                          TAP_STEPS[currentStep]?.type === 'text' ||
-                          currentInputType === 'text' ||
-                          currentInputType === 'yesno' ? (
-                            <div className="w-full space-y-4">
-                              <TapStepUI
-                                step={currentStep}
-                                language={language}
-                                onSubmit={(text) => submitTurnAnswer(text)}
-                                isProcessing={isProcessing}
-                                inputType={currentInputType}
-                                backendStepInputTypes={backendStepInputTypes}
-                              />
-                              <div className="flex items-center gap-3">
-                                <div className="flex-1 h-px bg-[#E2E8F4]" />
-                                <span className="text-[10px] text-[#6B7A99] font-medium">
-                                  {language === 'hi' ? 'या बोलकर जवाब दें' : 'or speak your answer'}
-                                </span>
-                                <div className="flex-1 h-px bg-[#E2E8F4]" />
-                              </div>
-                              <MicButton
-                                isRecording={isRecording}
-                                isProcessing={isProcessing}
-                                onToggle={handleMicToggle}
-                                onPress={handleMicPress}
-                                onRelease={handleMicRelease}
-                                onCancel={handleCancelRecording}
-                                recordingSeconds={recordingSeconds}
-                                liveTranscript={liveTranscript}
-                                language={language}
-                              />
-                            </div>
-                          ) : (
-                            <>
-                              <MicButton
-                                isRecording={isRecording}
-                                isProcessing={isProcessing}
-                                onToggle={handleMicToggle}
-                                onPress={handleMicPress}
-                                onRelease={handleMicRelease}
-                                onCancel={handleCancelRecording}
-                                recordingSeconds={recordingSeconds}
-                                liveTranscript={liveTranscript}
-                                language={language}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => { setMode('tap'); setInaudibleNotice(null); }}
-                                className="mt-4 text-xs text-[#2F6FED] hover:underline flex items-center gap-1 font-medium"
-                              >
-                                <Hand className="w-3.5 h-3.5" />
-                                <span>{language === 'hi' ? 'बोलने में परेशानी? टैप मोड का उपयोग करें' : 'Prefer tapping? Switch to tap mode'}</span>
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="pt-2 border-t border-[#E2E8F4]">
-                          <TapStepUI
-                            step={currentStep}
-                            language={language}
-                            onSubmit={(text) => submitTurnAnswer(text)}
-                            isProcessing={isProcessing}
-                            inputType={currentInputType}
-                            backendStepInputTypes={backendStepInputTypes}
-                          />
-                        </div>
-                      )
-                    )}
+              {/* Inaudible notice */}
+              {inaudibleNotice && (
+                <div className="p-3.5 rounded-2xl border border-[#F5A623]/30 bg-[#FEF6E9] text-[#1A2B4C] text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-[#F5A623] flex-shrink-0" />
+                    <span className="font-semibold text-[#B26B00]">{inaudibleNotice}</span>
                   </div>
-
-                  {error && (
-                    <div className="p-4 rounded-2xl border border-[#E5484D]/30 bg-[#FEECEE] text-[#E5484D] text-xs flex items-start gap-2">
-                      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <span className="font-semibold block">
-                          {error.includes('404') || error.toLowerCase().includes('not found')
-                            ? (language === 'hi' ? 'सत्र समाप्त हो गया — कृपया पुनः प्रारंभ करें।' : 'Session expired or not found — please restart.')
-                            : error.includes('500') || error.includes('Failed')
-                            ? (language === 'hi' ? 'सर्वर से जुड़ने में समस्या हुई — कृपया पुनः प्रयास करें।' : 'Server error — please try again.')
-                            : error}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setError(null)}
-                        className="ml-auto text-[#E5484D] hover:text-[#c93b40] flex-shrink-0"
-                        title="Dismiss"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                  {retryCount >= 3 && (
+                    <button
+                      type="button"
+                      onClick={() => { setMode('tap'); setInaudibleNotice(null); }}
+                      className="px-3 py-1 rounded-full bg-white border border-[#F5A623] text-[#B26B00] hover:bg-[#F5A623] hover:text-white text-[11px] font-bold transition whitespace-nowrap shadow-xs"
+                    >
+                      {language === 'hi' ? 'टैप मोड का उपयोग करें →' : 'Switch to Tap mode →'}
+                    </button>
                   )}
                 </div>
               )}
-            </>
-          )}
+
+              {/* Controls */}
+              {mode === 'speak' ? (
+                <div className="pt-2 border-t border-[#E2E8F4] flex flex-col items-center">
+                  {TAP_STEPS[currentStep]?.type?.startsWith('yes-no') ||
+                  TAP_STEPS[currentStep]?.type === 'chips-and-text' ||
+                  TAP_STEPS[currentStep]?.type === 'text' ||
+                  currentInputType === 'text' ||
+                  currentInputType === 'yesno' ? (
+                    <div className="w-full space-y-4">
+                      <TapStepUI
+                        step={currentStep}
+                        language={language}
+                        onSubmit={(text) => submitTurnAnswer(text)}
+                        isProcessing={isProcessing}
+                        inputType={currentInputType}
+                        backendStepInputTypes={backendStepInputTypes}
+                      />
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 h-px bg-[#E2E8F4]" />
+                        <span className="text-[10px] text-[#6B7A99] font-medium">
+                          {language === 'hi' ? 'या बोलकर जवाब दें' : 'or speak your answer'}
+                        </span>
+                        <div className="flex-1 h-px bg-[#E2E8F4]" />
+                      </div>
+                      <MicButton
+                        isRecording={isRecording}
+                        isProcessing={isProcessing}
+                        onToggle={handleMicToggle}
+                        onPress={handleMicPress}
+                        onRelease={handleMicRelease}
+                        onCancel={handleCancelRecording}
+                        recordingSeconds={recordingSeconds}
+                        liveTranscript={liveTranscript}
+                        language={language}
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <MicButton
+                        isRecording={isRecording}
+                        isProcessing={isProcessing}
+                        onToggle={handleMicToggle}
+                        onPress={handleMicPress}
+                        onRelease={handleMicRelease}
+                        onCancel={handleCancelRecording}
+                        recordingSeconds={recordingSeconds}
+                        liveTranscript={liveTranscript}
+                        language={language}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { setMode('tap'); setInaudibleNotice(null); }}
+                        className="mt-4 text-xs text-[#2F6FED] hover:underline flex items-center gap-1 font-medium"
+                      >
+                        <Hand className="w-3.5 h-3.5" />
+                        <span>{language === 'hi' ? 'बोलने में परेशानी? टैप मोड का उपयोग करें' : 'Prefer tapping? Switch to tap mode'}</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="pt-2 border-t border-[#E2E8F4]">
+                  <TapStepUI
+                    step={currentStep}
+                    language={language}
+                    onSubmit={(text) => submitTurnAnswer(text)}
+                    isProcessing={isProcessing}
+                    inputType={currentInputType}
+                    backendStepInputTypes={backendStepInputTypes}
+                  />
+                </div>
+              )}
+            </div>
+
+            {error && (
+              <div className="p-4 rounded-2xl border border-[#E5484D]/30 bg-[#FEECEE] text-[#E5484D] text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <span className="font-semibold block">{error}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setError(null)}
+                  className="ml-auto text-[#E5484D] hover:text-[#c93b40] flex-shrink-0"
+                  title="Dismiss"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
+      )}
+
+      {/* Stage 4: Upload 1-3 Medical Documents */}
+      {linearStage === 'upload_docs' && (
+        <UploadDocsLinearScreen
+          visitId={visitId}
+          language={language}
+          extractedDocs={extractedDocs}
+          onDocumentExtracted={handleDocumentExtracted}
+          onContinue={() => setLinearStage('ai_extraction')}
+          onSkip={() => setLinearStage('ai_extraction')}
+        />
+      )}
+
+      {/* Stage 5: AI Extraction Results */}
+      {linearStage === 'ai_extraction' && (
+        <AIExtractionLinearScreen
+          extractedDocs={extractedDocs}
+          language={language}
+          patient={patient}
+          onContinue={() => setLinearStage('structured_history')}
+        />
+      )}
+
+      {/* Stage 6: Structured History Screen */}
+      {linearStage === 'structured_history' && (
+        <StructuredHistoryScreen
+          patient={patient}
+          visitId={visitId}
+          consentTimestamp={consentTimestamp}
+          language={language}
+          turns={turns}
+          extractedDocs={extractedDocs}
+          urgencyFlag={urgencyFlag}
+          urgencyDept={urgencyDept}
+          urgencyReason={urgencyReason}
+          onViewCaseDraft={onViewCaseDraft}
+          onRestart={handleRestart}
+          isPatientView={isPatientView}
+        />
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -12,6 +12,10 @@ class Visit(Base):
     urgency_flag = Column(Boolean, default=False, nullable=False)
     department = Column(String(100), nullable=True)
     urgency_reason = Column(String(255), nullable=True)
+    consent_given = Column(Boolean, default=False, nullable=False)
+    consent_timestamp = Column(DateTime, nullable=True)
+    # Patient session isolation token (UUID4, generated at intake start)
+    visit_token = Column(String(36), unique=True, nullable=True, index=True)
 
     # Relationships
     patient = relationship("Patient", back_populates="visits")

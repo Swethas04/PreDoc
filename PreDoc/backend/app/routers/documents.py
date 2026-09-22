@@ -1,4 +1,5 @@
 import logging
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -18,6 +19,7 @@ from app.schemas.document import (
     DocumentListResponse,
 )
 from app.services.gemini import extract_medical_document
+from app.services.auth import get_current_actor, verify_visit_access
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
@@ -36,6 +38,7 @@ async def extract_document(
     visit_id: int = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    actor: Optional[dict] = Depends(get_current_actor),
 ):
     """
     Upload a medical document image. Sends it to Gemini Vision for structured
@@ -44,12 +47,19 @@ async def extract_document(
     """
     # Validate or auto-create visit
     visit = db.query(Visit).filter(Visit.id == visit_id).first() if visit_id and visit_id > 0 else None
+    if visit:
+        verify_visit_access(visit, actor)
     if not visit:
         # Create an intake patient & visit so upload always succeeds smoothly
         patient = Patient(name="Intake Patient", age=None, language="en")
         db.add(patient)
         db.flush()
-        visit = Visit(patient_id=patient.id, status="intake_in_progress", urgency_flag=False)
+        visit = Visit(
+            patient_id=patient.id,
+            status="intake_in_progress",
+            urgency_flag=False,
+            visit_token=str(uuid.uuid4()),
+        )
         db.add(visit)
         db.commit()
         db.refresh(visit)
@@ -144,11 +154,16 @@ async def extract_document(
 # GET /api/documents/{visit_id}
 # ---------------------------------------------------------------------------
 @router.get("/{visit_id}", response_model=DocumentListResponse)
-def list_documents(visit_id: int, db: Session = Depends(get_db)):
+def list_documents(
+    visit_id: int,
+    db: Session = Depends(get_db),
+    actor: Optional[dict] = Depends(get_current_actor),
+):
     """Return all extracted document records for a visit, ordered by upload time."""
     visit = db.query(Visit).filter(Visit.id == visit_id).first()
     if not visit:
         return DocumentListResponse(visit_id=visit_id, documents=[], total=0)
+    verify_visit_access(visit, actor)
 
     docs = (
         db.query(DocumentRecord)
