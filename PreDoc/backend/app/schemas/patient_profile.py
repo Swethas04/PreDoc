@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, computed_field
 from datetime import datetime
 from app.schemas.consultation import ConsultationRead
@@ -62,6 +62,8 @@ class PatientDocumentUploadResponse(BaseModel):
     download_url: Optional[str] = None
     uploaded_by: Optional[str] = "patient"
     uploaded_at: Optional[datetime] = None
+    is_emergency: bool = False
+    triage_evaluation: Optional[Dict[str, Any]] = None
     message: str = "Document uploaded successfully against patient profile."
 
 

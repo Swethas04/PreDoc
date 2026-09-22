@@ -11,6 +11,8 @@ from app.models.case_draft import CaseDraft
 from app.models.document_record import DocumentRecord
 from app.models.intake_turn import IntakeTurn
 from app.models.patient import Patient
+from app.models.patient_document import PatientDocument
+from app.models.patient_profile import PatientProfile
 from app.models.user import User
 from app.models.visit import Visit
 from app.schemas.case_draft import (
@@ -628,9 +630,19 @@ def get_triage_feed(
         has_draft = draft is not None and draft.content_json is not None
         is_approved = bool(draft.is_approved) if draft else (v.status == "approved")
 
+        p_code = getattr(v.patient, "patient_code", None) if v.patient else None
+        if not p_code and v.patient_profile_id:
+            from app.models.patient_profile import PatientProfile
+            prof = db.query(PatientProfile).filter(PatientProfile.id == v.patient_profile_id).first()
+            if prof:
+                p_code = getattr(prof, "patient_code", None)
+        if not p_code and v.patient_id:
+            p_code = f"PD-{v.patient_id:04d}"
+
         results.append({
             "visit_id": v.id,
             "patient_id": v.patient_id,
+            "patient_code": p_code,
             "patient_name": v.patient.name if v.patient else "Unknown",
             "patient_age": v.patient.age if v.patient else None,
             "language": v.patient.language if v.patient else "en",
@@ -638,6 +650,7 @@ def get_triage_feed(
             "urgency_flag": v.urgency_flag,
             "department": v.department or "General Medicine",
             "urgency_reason": v.urgency_reason or "Urgent clinical attention flagged",
+            "created_at": v.created_at.isoformat() if getattr(v, "created_at", None) else None,
             "latest_step": latest_turn.step if latest_turn else None,
             "latest_transcript": latest_turn.transcript if latest_turn else None,
             "has_draft": has_draft,

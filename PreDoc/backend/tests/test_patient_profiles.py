@@ -13,7 +13,8 @@ from app.models.patient import Patient
 from app.models.visit import Visit
 from app.models.case_draft import CaseDraft
 from app.models.intake_turn import IntakeTurn
-from app.services.auth import create_token_for_user, hash_password
+from app.models.prescription import Prescription
+from app.services.auth import create_token_for_user, create_patient_token, hash_password
 
 
 class TestPatientProfilesAndConsultations(unittest.TestCase):
@@ -25,6 +26,7 @@ class TestPatientProfilesAndConsultations(unittest.TestCase):
     def setUp(self):
         self.db = TestingSessionLocal()
         # Clean up database
+        self.db.query(Prescription).delete()
         self.db.query(Consultation).delete()
         self.db.query(PatientDocument).delete()
         self.db.query(CaseDraft).delete()
@@ -219,6 +221,121 @@ class TestPatientProfilesAndConsultations(unittest.TestCase):
         allowed_get = self.client.get(f"/api/patients/{self.profile2.id}", headers=doc_headers)
         self.assertEqual(allowed_get.status_code, 200)
 
+    def test_patient_prescriptions_retrieval_and_access_control(self):
+        """Test GET /api/patients/{patient_id}/prescriptions and patient-session access control."""
+        # Create Patient records with PIN and tokens
+        patient_obj1 = Patient(
+            name="Anita Desai",
+            age=45,
+            patient_code="PD-ANITA1",
+            pin_hash=hash_password("1234"),
+        )
+        patient_obj2 = Patient(
+            name="Rahul Sharma",
+            age=52,
+            patient_code="PD-RAHUL2",
+            pin_hash=hash_password("5678"),
+        )
+        self.db.add_all([patient_obj1, patient_obj2])
+        self.db.commit()
+        self.db.refresh(patient_obj1)
+        self.db.refresh(patient_obj2)
+
+        p1_token = f"Bearer {create_patient_token(patient_obj1)}"
+        p2_token = f"Bearer {create_patient_token(patient_obj2)}"
+
+        # Save Prescription for Patient 1 via Visit
+        rx_payload = {
+            "doctor_name": "Dr. Sarah Rao, MD",
+            "diagnosis": "Acute Migraine & Tension Headache",
+            "medicines": [
+                {
+                    "name": "Sumatriptan 50mg",
+                    "composition": "Sumatriptan Succinate",
+                    "dosage": "1 tablet",
+                    "frequency": "SOS (As needed)",
+                    "duration": "3 days",
+                    "instructions": "At onset of headache",
+                },
+                {
+                    "name": "Naproxen 500mg",
+                    "composition": "Naproxen Sodium",
+                    "dosage": "500mg",
+                    "frequency": "1-0-1 (Twice daily)",
+                    "duration": "5 days",
+                    "instructions": "After food",
+                },
+            ],
+            "general_advice": "Rest in a quiet, dark room. Hydrate well.",
+            "follow_up": "Review after 7 days if migraines recur.",
+        }
+
+        # Set visit patient_id
+        self.visit1.patient_id = patient_obj1.id
+        self.db.commit()
+
+        # Doctor saves prescription for visit1
+        save_resp = self.client.post(
+            f"/api/prescriptions/visit/{self.visit1.id}",
+            json=rx_payload,
+            headers={"Authorization": self.doc_token},
+        )
+        self.assertEqual(save_resp.status_code, 200)
+        saved_rx = save_resp.json()
+        self.assertEqual(saved_rx["doctor_name"], "Dr. Sarah Rao, MD")
+        self.assertEqual(len(saved_rx["medicines"]), 2)
+        self.assertEqual(saved_rx["patient_id"], patient_obj1.id)
+
+        # 1. Patient 1 fetches their own prescriptions -> 200 OK with list of prescriptions
+        p1_resp = self.client.get(
+            f"/api/patients/{patient_obj1.id}/prescriptions",
+            headers={"Authorization": p1_token},
+        )
+        self.assertEqual(p1_resp.status_code, 200)
+        p1_rxs = p1_resp.json()
+        self.assertEqual(len(p1_rxs), 1)
+        self.assertEqual(p1_rxs[0]["doctor_name"], "Dr. Sarah Rao, MD")
+        self.assertEqual(p1_rxs[0]["visit_id"], self.visit1.id)
+        self.assertEqual(len(p1_rxs[0]["medicines"]), 2)
+        self.assertEqual(p1_rxs[0]["medicines"][0]["name"], "Sumatriptan 50mg")
+
+        # 2. Patient 2 attempts to fetch Patient 1's prescriptions -> 403 Forbidden
+        p2_forbidden = self.client.get(
+            f"/api/patients/{patient_obj1.id}/prescriptions",
+            headers={"Authorization": p2_token},
+        )
+        self.assertEqual(p2_forbidden.status_code, 403)
+        self.assertIn("Access denied", p2_forbidden.json()["detail"])
+
+        # 3. Doctor fetches Patient 1's prescriptions -> 200 OK
+        doc_resp = self.client.get(
+            f"/api/patients/{patient_obj1.id}/prescriptions",
+            headers={"Authorization": self.doc_token},
+        )
+        self.assertEqual(doc_resp.status_code, 200)
+        self.assertEqual(len(doc_resp.json()), 1)
+
+        # 4. Public read-only endpoint (no auth header) via share_token
+        share_token = p1_rxs[0]["share_token"]
+        self.assertTrue(bool(share_token))
+        self.assertGreaterEqual(len(share_token), 20)
+
+        public_resp = self.client.get(f"/api/prescriptions/share/{share_token}")
+        self.assertEqual(public_resp.status_code, 200)
+        pub_data = public_resp.json()
+        self.assertEqual(pub_data["patient_name"], "Anita Desai")
+        self.assertEqual(pub_data["patient_code"], "PD-ANITA1")
+        self.assertEqual(pub_data["doctor_name"], "Dr. Sarah Rao, MD")
+        self.assertEqual(len(pub_data["medicines"]), 2)
+        self.assertTrue(pub_data["is_verified"])
+        self.assertFalse(pub_data["is_expired"])
+
+        # 5. Invalid token -> 404
+        invalid_resp = self.client.get("/api/prescriptions/share/invalid_token_99999")
+        self.assertEqual(invalid_resp.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

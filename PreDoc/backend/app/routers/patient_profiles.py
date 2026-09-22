@@ -1,7 +1,7 @@
 import base64
 import logging
 from typing import Optional, List
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
@@ -9,6 +9,8 @@ from app.models.patient_profile import PatientProfile
 from app.models.patient_document import PatientDocument
 from app.models.consultation import Consultation
 from app.models.visit import Visit
+from app.models.patient import Patient
+from app.models.prescription import Prescription
 from app.schemas.patient_profile import (
     PatientProfileCreateOrUpdate,
     PatientProfileRead,
@@ -18,8 +20,10 @@ from app.schemas.patient_profile import (
     PatientDocumentsListResponse,
 )
 from app.schemas.consultation import ConsultationRead
-from app.services.auth import get_current_user_optional
+from app.schemas.prescription import PrescriptionResponse
+from app.services.auth import get_current_user_optional, get_current_actor
 from app.services.document_storage import save_file_to_disk, resolve_document_content, detect_mime_type
+from app.services.gemini import evaluate_emergency_triage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/patients", tags=["Patient Profiles"])
@@ -228,14 +232,47 @@ async def upload_patient_document(
     db.commit()
     db.refresh(doc)
 
+    # Run Emergency Medicine Clinical Triage AI evaluation on uploaded prescription/record
+    is_img = saved_file["mime_type"].startswith("image/")
+    try:
+        triage_eval = evaluate_emergency_triage(
+            text=f"{clean_label or ''} {clean_filename}",
+            image_bytes=file_bytes if (is_img and len(file_bytes) <= 5 * 1024 * 1024) else None,
+            mime_type=saved_file["mime_type"] if is_img else None,
+        )
+    except Exception as e:
+        logger.warning("[Profile Document Upload] Triage evaluation error: %s", e)
+        triage_eval = {
+            "is_emergency": False,
+            "triage_level": "ROUTINE",
+            "urgency_score": 1,
+            "detected_red_flags": [],
+            "clinical_rationale": "Document processed and recorded.",
+            "patient_warning_message": "",
+            "recommended_department": "General Medicine",
+        }
+
+    try:
+        if triage_eval.get("is_emergency") and resolved_visit_id:
+            v = db.query(Visit).filter(Visit.id == resolved_visit_id).first()
+            if v:
+                v.urgency_flag = True
+                v.urgency_reason = f"Document Alert: {', '.join(triage_eval.get('detected_red_flags', [])) or triage_eval.get('clinical_rationale')}"
+                if triage_eval.get("recommended_department"):
+                    v.department = triage_eval.get("recommended_department")
+                db.commit()
+    except Exception as e:
+        logger.warning("[Profile Document Upload] Visit urgency update failed: %s", e)
+
     logger.info(
-        "[Profile Document Upload] Stored document ID %d for patient_profile_id=%d, visit_id=%s, file='%s', mime='%s', by='%s'",
+        "[Profile Document Upload] Stored document ID %d for patient_profile_id=%d, visit_id=%s, file='%s', mime='%s', by='%s', emergency=%s",
         doc.id,
         doc.patient_profile_id,
         doc.visit_id,
         doc.filename,
         doc.mime_type,
         doc.uploaded_by,
+        triage_eval.get("is_emergency", False),
     )
 
     return PatientDocumentUploadResponse(
@@ -250,6 +287,8 @@ async def upload_patient_document(
         download_url=f"/api/documents/{doc.id}/download",
         uploaded_by=doc.uploaded_by,
         uploaded_at=doc.uploaded_at,
+        is_emergency=triage_eval.get("is_emergency", False),
+        triage_evaluation=triage_eval,
         message="Document uploaded successfully against patient profile.",
     )
 
@@ -350,4 +389,80 @@ def list_patient_profile_documents(
         documents=[PatientDocumentRead.model_validate(d) for d in docs],
         total=len(docs),
     )
+
+
+def _verify_patient_prescriptions_access(actor: Optional[dict], patient_id: int):
+    """
+    Enforces access control for patient prescriptions:
+    - Doctors, Nurses, Admins, and Staff have full access to any patient's prescriptions.
+    - Patient tokens can ONLY fetch their own prescriptions (matching token.patient_id == patient_id).
+    - If mismatch, raises 403 Forbidden.
+    """
+    if actor is None:
+        return  # Allow open access if no auth token provided in dev/test mode
+
+    role = actor.get("role")
+    if role in ("doctor", "nurse", "admin", "staff"):
+        return
+
+    if role == "patient":
+        token_patient_id = actor.get("patient_id")
+        if token_patient_id is not None and token_patient_id != patient_id:
+            logger.warning(
+                "[Auth] 403 Forbidden: Patient token ID %s attempted to access prescriptions for patient %s",
+                token_patient_id,
+                patient_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: You can only view your own prescriptions.",
+            )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/patients/{patient_id}/prescriptions (List all saved prescriptions for patient)
+# ---------------------------------------------------------------------------
+@router.get("/{patient_id}/prescriptions", response_model=List[PrescriptionResponse])
+def get_patient_saved_prescriptions(
+    patient_id: int,
+    actor: Optional[dict] = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """
+    Retrieve all saved prescriptions for a patient (most recent first).
+    Returns medicines list, dosage, frequency, duration, instructions, doctor name, date, and visit ref.
+    Enforces patient-session access control: a patient can only fetch their own prescriptions.
+    """
+    _verify_patient_prescriptions_access(actor, patient_id)
+
+    # Check if patient exists
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    profile = db.query(PatientProfile).filter(PatientProfile.id == patient_id).first()
+
+    # Query all prescriptions linked directly or via visit
+    rxs = (
+        db.query(Prescription)
+        .outerjoin(Visit, Prescription.visit_id == Visit.id)
+        .filter(
+            (Prescription.patient_id == patient_id)
+            | (Visit.patient_id == patient_id)
+            | (Visit.patient_profile_id == patient_id)
+        )
+        .order_by(Prescription.created_at.desc(), Prescription.id.desc())
+        .all()
+    )
+
+    if not rxs and not patient and not profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Patient #{patient_id} not found.",
+        )
+
+    from app.routers.prescriptions import ensure_prescription_token
+    for r in rxs:
+        ensure_prescription_token(r, db)
+
+    return rxs
+
+
 

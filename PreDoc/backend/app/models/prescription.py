@@ -15,6 +15,8 @@ class Prescription(Base):
     medicines = Column(JSON, nullable=False, default=list)  # List of prescribed medicine items
     general_advice = Column(Text, nullable=True)
     follow_up = Column(String(255), nullable=True)
+    share_token = Column(String(64), unique=True, index=True, nullable=True)
+    token_expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

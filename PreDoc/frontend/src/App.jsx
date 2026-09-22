@@ -20,6 +20,7 @@ import DoctorDashboard from './components/DoctorDashboard';
 import PrescriptionTab from './components/PrescriptionTab';
 import RoleLanding from './components/RoleLanding';
 import StaffLogin from './components/StaffLogin';
+import PublicPrescriptionPage from './components/PublicPrescriptionPage';
 
 // ─── Backend health hook ──────────────────────────────────────────────────────
 function useBackendHealth() {
@@ -435,6 +436,13 @@ function DoctorShell({
 
 // ─── Root App ─────────────────────────────────────────────────────────────────
 export default function App() {
+  // Handle public prescription verification route (/rx/view/:token)
+  const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
+  if (currentPath.startsWith('/rx/view/')) {
+    const rxToken = currentPath.replace('/rx/view/', '').split('/')[0].split('?')[0];
+    return <PublicPrescriptionPage token={rxToken} />;
+  }
+
   const { healthData, loading, error, fetchHealth } = useBackendHealth();
 
   // Role state: null = show landing, 'patient' or 'doctor'

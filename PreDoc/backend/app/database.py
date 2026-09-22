@@ -171,6 +171,54 @@ def init_db():
                 conn.execute(text("ALTER TABLE patient_documents ADD COLUMN file_path VARCHAR(1024)"))
             except Exception:
                 pass
+            # 20. prescriptions.share_token
+            try:
+                conn.execute(text("ALTER TABLE prescriptions ADD COLUMN share_token VARCHAR(64)"))
+            except Exception:
+                pass
+            # 21. prescriptions.token_expires_at
+            try:
+                conn.execute(text("ALTER TABLE prescriptions ADD COLUMN token_expires_at TIMESTAMP"))
+            except Exception:
+                pass
+
+        # 22. SQLite document_records: make visit_id nullable if it was created with NOT NULL
+        if "sqlite" in db_url:
+            with engine.begin() as conn:
+                try:
+                    pragma_info = conn.execute(text("PRAGMA table_info(document_records)")).fetchall()
+                    visit_id_col = next((c for c in pragma_info if c[1] == "visit_id"), None)
+                    if visit_id_col and visit_id_col[3] == 1:  # notnull == 1
+                        logger.info("[DB] Migrating SQLite document_records to make visit_id nullable...")
+                        conn.execute(text("PRAGMA foreign_keys=off;"))
+                        conn.execute(text("""
+                            CREATE TABLE IF NOT EXISTS document_records_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                patient_id INTEGER,
+                                visit_id INTEGER,
+                                filename VARCHAR(512) NOT NULL,
+                                mime_type VARCHAR(100) NOT NULL DEFAULT 'image/jpeg',
+                                label VARCHAR(255),
+                                file_url VARCHAR(1024),
+                                file_path VARCHAR(1024),
+                                image_base64 TEXT,
+                                raw_text TEXT,
+                                extracted_json JSON,
+                                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE CASCADE,
+                                FOREIGN KEY(visit_id) REFERENCES visits(id) ON DELETE SET NULL
+                            );
+                        """))
+                        conn.execute(text("""
+                            INSERT INTO document_records_new (id, patient_id, visit_id, filename, mime_type, label, file_url, file_path, image_base64, raw_text, extracted_json, created_at)
+                            SELECT id, patient_id, visit_id, filename, mime_type, label, file_url, file_path, image_base64, raw_text, extracted_json, created_at FROM document_records;
+                        """))
+                        conn.execute(text("DROP TABLE document_records;"))
+                        conn.execute(text("ALTER TABLE document_records_new RENAME TO document_records;"))
+                        conn.execute(text("PRAGMA foreign_keys=on;"))
+                        logger.info("[DB] SQLite document_records migration completed successfully.")
+                except Exception as ex:
+                    logger.warning("[DB] Could not migrate SQLite document_records table: %s", ex)
 
         logger.info("Database tables and column migrations initialized successfully.")
     except Exception as e:
