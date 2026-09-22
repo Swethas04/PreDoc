@@ -18,6 +18,7 @@ class Patient(Base):
     # Relationship to visits and documents
     visits = relationship("Visit", back_populates="patient", cascade="all, delete-orphan")
     document_records = relationship("DocumentRecord", back_populates="patient", cascade="all, delete-orphan")
+    prescriptions = relationship("Prescription", back_populates="patient", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Patient(id={self.id}, name='{self.name}', age={self.age}, patient_code='{self.patient_code}')>"
