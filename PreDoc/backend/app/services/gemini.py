@@ -18,16 +18,16 @@ from google import genai
 from google.genai import types
 
 from app.config import settings
-from app.services.red_flag_checker import evaluate_red_flags
+from app.services.red_flag_checker import evaluate_red_flags, evaluate_emergency_rules
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 CANDIDATE_GEMINI_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
     "gemini-2.5-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-flash-latest",
+    "gemini-2.0-flash-lite",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1593,6 +1593,109 @@ def generate_soap_case_draft(
         logger.error("Gemini case draft generation error: %s. Falling back to clinical synthesis.", e, exc_info=True)
         fallback = _generate_fallback_soap(patient_name, patient_age, language, turns, documents, visit=visit)
         return fallback, source_links
+
+
+# ============================================================================
+# EMERGENCY MEDICINE CLINICAL TRIAGE AI
+# ============================================================================
+
+EMERGENCY_TRIAGE_SYSTEM_PROMPT = """You are an Emergency Medicine Clinical Triage AI for PreDoc.
+Your responsibility is to analyze patient-entered symptoms and/or text extracted from uploaded prescriptions, lab reports, or clinical records to detect life-threatening, critical conditions requiring immediate emergency intervention.
+
+### Clinical Evaluation Criteria:
+Classify the condition into one of the following acuity levels:
+- CRITICAL / LEVEL 1 (Immediate Emergency):
+  * Acute coronary syndrome / MI signs (crushing chest pain radiating to arm/jaw, diaphoresis, dyspnea)
+  * Acute stroke / TIA symptoms (FAST criteria: facial droop, arm weakness, slurred speech)
+  * Severe respiratory failure / acute asthma attack / stridor
+  * Anaphylaxis / airway compromise
+  * Severe sepsis (high fever + altered mental status + extreme tachycardia/hypotension)
+  * Active severe hemorrhage / shock
+  * High-risk rescue prescriptions combined with acute exacerbation (e.g., Sublingual Nitroglycerin, EpiPen)
+- URGENT / LEVEL 2: Moderate to severe symptoms requiring prompt clinical review within 1-2 hours.
+- ROUTINE / LEVEL 3: Stable, chronic, or mild conditions.
+
+### Response Format (Strict JSON):
+{
+  "is_emergency": true,
+  "triage_level": "CRITICAL",
+  "urgency_score": 5,
+  "detected_red_flags": ["chest pain radiating to left arm", "shortness of breath"],
+  "clinical_rationale": "Crushing chest pain radiating to left arm with acute dyspnea is indicative of acute myocardial infarction.",
+  "patient_warning_message": "🚨 CRITICAL MEDICAL ALERT: Seek immediate emergency medical attention at the nearest hospital or dial 108 / 911 immediately.",
+  "recommended_department": "Emergency Medicine"
+}
+
+Do not downplay red flag symptoms. When in doubt regarding life-threatening presentations, prioritize patient safety by flagging as emergency."""
+
+
+def evaluate_emergency_triage(
+    text: str = "",
+    document_text: Optional[str] = None,
+    image_bytes: Optional[bytes] = None,
+    mime_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Evaluates patient condition text or uploaded document/prescription using the
+    PreDoc Emergency Medicine Clinical Triage AI model, with deterministic fallback.
+    """
+    try:
+        combined_content = f"{text or ''} \n {document_text or ''}".strip()
+
+        # 1. Check deterministic rules for instant critical trigger
+        rule_result = evaluate_emergency_rules(combined_content)
+        if rule_result.get("is_emergency"):
+            logger.info("[Emergency Triage] Rule-based instant critical trigger: %s", rule_result.get("detected_red_flags"))
+            return rule_result
+
+        # 2. Call Gemini for full multimodal/semantic clinical triage
+        client = _get_client()
+        if client and (combined_content or image_bytes):
+            try:
+                parts = []
+                if image_bytes:
+                    eff_mime = mime_type or "image/jpeg"
+                    parts.append(types.Part.from_bytes(data=image_bytes, mime_type=eff_mime))
+
+                prompt_body = (
+                    f"{EMERGENCY_TRIAGE_SYSTEM_PROMPT}\n\n"
+                    f"Evaluate the following patient condition / prescription / medical record:\n"
+                    f"\"\"\"\n{combined_content}\n\"\"\""
+                )
+                parts.append(types.Part(text=prompt_body))
+
+                contents = [types.Content(role="user", parts=parts)]
+
+                cfg = types.GenerateContentConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                )
+                response = _generate_with_fallback(client, contents, config=cfg)
+                raw_text = response.text.strip() if response and response.text else ""
+                if raw_text:
+                    if raw_text.startswith("```"):
+                        raw_text = re.sub(r"^```(?:json)?\n?", "", raw_text)
+                        raw_text = re.sub(r"\n?```$", "", raw_text).strip()
+                    data = json.loads(raw_text)
+                    if isinstance(data, dict) and "is_emergency" in data:
+                        return {
+                            "is_emergency": bool(data.get("is_emergency", False)),
+                            "triage_level": str(data.get("triage_level", "ROUTINE")).upper(),
+                            "urgency_score": int(data.get("urgency_score", 1)),
+                            "detected_red_flags": list(data.get("detected_red_flags", [])),
+                            "clinical_rationale": str(data.get("clinical_rationale", "")),
+                            "patient_warning_message": str(data.get("patient_warning_message", "")),
+                            "recommended_department": str(data.get("recommended_department", "General Medicine")),
+                        }
+            except Exception as e:
+                logger.warning("[Emergency Triage] Gemini evaluation failed, falling back to rule evaluation: %s", e)
+
+        return rule_result
+    except Exception as outer_err:
+        logger.error("[Emergency Triage] Unexpected error in evaluate_emergency_triage: %s", outer_err, exc_info=True)
+        return evaluate_emergency_rules(text or "")
+
+
 
 
 

@@ -11,7 +11,9 @@ import {
   Eye,
   X,
   Plus,
+  ShieldAlert,
 } from 'lucide-react';
+import CriticalTriageModal from './CriticalTriageModal';
 
 const API_BASE = '/api';
 
@@ -29,6 +31,7 @@ export default function DocumentUpload({
   const [error, setError] = useState(null);
   const [labelInput, setLabelInput] = useState('');
   const [previewImage, setPreviewImage] = useState(null);
+  const [criticalTriage, setCriticalTriage] = useState(null);
 
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
@@ -79,6 +82,21 @@ export default function DocumentUpload({
       }
 
       const data = await res.json();
+
+      // Check for immediate emergency/critical condition detection
+      if (data.is_emergency || data.triage_evaluation?.is_emergency) {
+        setCriticalTriage(
+          data.triage_evaluation || {
+            is_emergency: true,
+            triage_level: 'CRITICAL',
+            urgency_score: 5,
+            detected_red_flags: ['High risk prescription/condition detected'],
+            clinical_rationale: 'Clinical emergency triggers detected in uploaded document.',
+            patient_warning_message: 'Immediate emergency medical attention required.',
+            recommended_department: 'Emergency Medicine',
+          }
+        );
+      }
 
       if (onDocumentUploaded) {
         onDocumentUploaded(data);
@@ -380,6 +398,14 @@ export default function DocumentUpload({
           </div>
         </div>
       )}
+
+      {/* Critical Emergency Triage Modal */}
+      <CriticalTriageModal
+        isOpen={!!criticalTriage}
+        onClose={() => setCriticalTriage(null)}
+        triageData={criticalTriage}
+        language={language}
+      />
     </div>
   );
 }

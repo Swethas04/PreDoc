@@ -19,6 +19,8 @@ from app.schemas.intake import (
     IntakeTurnRead,
     UpdatePatientRequest,
     ParseDemographicsResponse,
+    EvaluateEmergencyRequest,
+    EvaluateEmergencyResponse,
 )
 from app.services.gemini import (
     CLINICAL_STEPS,
@@ -29,6 +31,7 @@ from app.services.gemini import (
     get_next_step,
     transcribe_audio,
     parse_demographics_from_text,
+    evaluate_emergency_triage,
 )
 from app.services.red_flag_checker import evaluate_red_flags
 from app.services.auth import (
@@ -524,7 +527,7 @@ async def respond_intake(
     if is_complete:
         visit.status = "intake_complete"
 
-    # --- Real-Time Red-Flag Evaluation ---
+    # --- Real-Time Red-Flag & Emergency Triage Evaluation ---
     all_turns = (
         db.query(IntakeTurn)
         .filter(IntakeTurn.visit_id == visit_id)
@@ -534,19 +537,24 @@ async def respond_intake(
     if transcript not in all_transcripts:
         all_transcripts.append(transcript)
 
+    combined_intake_text = " ".join(all_transcripts)
+    emergency_triage_result = evaluate_emergency_triage(text=combined_intake_text)
+
     red_flag_result = evaluate_red_flags(all_transcripts)
-    if red_flag_result.is_urgent:
+    if red_flag_result.is_urgent or emergency_triage_result.get("is_emergency"):
         visit.urgency_flag = True
-        if red_flag_result.department:
-            visit.department = red_flag_result.department
-        if red_flag_result.reason:
-            visit.urgency_reason = red_flag_result.reason
+        dept = emergency_triage_result.get("recommended_department") or red_flag_result.department
+        if dept:
+            visit.department = dept
+        reason = emergency_triage_result.get("clinical_rationale") or red_flag_result.reason
+        if reason:
+            visit.urgency_reason = reason
         logger.warning(
-            "RED FLAG TRIGGERED for Visit %d: Dept=%s, Reason=%s, Triggers=%s",
+            "RED FLAG / EMERGENCY TRIGGERED for Visit %d: Dept=%s, Reason=%s, Triggers=%s",
             visit.id,
             visit.department,
             visit.urgency_reason,
-            red_flag_result.matched_triggers,
+            emergency_triage_result.get("detected_red_flags") or red_flag_result.matched_triggers,
         )
 
     db.commit()
@@ -568,10 +576,98 @@ async def respond_intake(
         urgency_flag=visit.urgency_flag,
         department=visit.department,
         urgency_reason=visit.urgency_reason,
-        matched_triggers=red_flag_result.matched_triggers if red_flag_result.is_urgent else None,
+        matched_triggers=emergency_triage_result.get("detected_red_flags") or red_flag_result.matched_triggers if (red_flag_result.is_urgent or emergency_triage_result.get("is_emergency")) else None,
         input_type=current_input_type,
         next_input_type=next_input_type,
         suggested_adaptive_steps=suggested_adaptive_steps or None,
+        emergency_triage=emergency_triage_result,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/intake/evaluate-emergency
+# ---------------------------------------------------------------------------
+@router.post("/evaluate-emergency", response_model=EvaluateEmergencyResponse)
+def evaluate_patient_emergency(
+    body: EvaluateEmergencyRequest,
+    db: Session = Depends(get_db),
+    actor: Optional[dict] = Depends(get_current_actor),
+):
+    """
+    On-demand endpoint to evaluate any entered condition or symptoms using the
+    PreDoc Emergency Medicine Clinical Triage AI.
+    If visit_id is provided, automatically updates visit urgency if emergency is flagged.
+    """
+    result = evaluate_emergency_triage(text=body.text)
+    
+    # If emergency detected and patient/visit is provided, reflect immediately in Triage Queue
+    if result.get("is_emergency") or result.get("triage_level") == "CRITICAL":
+        alert_reason = f"Patient Emergency Alert: {', '.join(result.get('detected_red_flags', [])) or result.get('clinical_rationale')}"
+        rec_dept = result.get("recommended_department", "Emergency Medicine")
+
+        target_visit = None
+        if body.visit_id:
+            target_visit = db.query(Visit).filter(Visit.id == body.visit_id).first()
+            if target_visit:
+                verify_visit_access(target_visit, actor)
+
+        if not target_visit and body.patient_id:
+            # Check for existing open visit for this patient
+            target_visit = (
+                db.query(Visit)
+                .filter(
+                    (Visit.patient_id == body.patient_id) | (Visit.patient_profile_id == body.patient_id),
+                    Visit.status.in_(["intake_in_progress", "triaged", "in_queue", "pending"]),
+                )
+                .order_by(Visit.id.desc())
+                .first()
+            )
+            if not target_visit:
+                # Find patient or patient profile
+                p = db.query(Patient).filter(Patient.id == body.patient_id).first()
+                target_visit = Visit(
+                    patient_id=body.patient_id if p else None,
+                    patient_profile_id=body.patient_id,
+                    status="intake_in_progress",
+                    urgency_flag=True,
+                    urgency_reason=alert_reason,
+                    department=rec_dept,
+                )
+                db.add(target_visit)
+                db.flush()
+
+        if target_visit:
+            target_visit.urgency_flag = True
+            target_visit.urgency_reason = alert_reason
+            if rec_dept:
+                target_visit.department = rec_dept
+
+            # Save the emergency symptom text as a turn
+            turn = IntakeTurn(
+                visit_id=target_visit.id,
+                step="chief_complaint",
+                question="Emergency Condition Entry",
+                transcript=body.text,
+                language=body.language or "en",
+            )
+            db.add(turn)
+            db.commit()
+            logger.warning(
+                "[Emergency Triage API] Created/Updated urgent Visit #%d for patient_id=%s, dept=%s, reason=%s",
+                target_visit.id,
+                body.patient_id or target_visit.patient_id,
+                target_visit.department,
+                target_visit.urgency_reason,
+            )
+
+    return EvaluateEmergencyResponse(
+        is_emergency=result.get("is_emergency", False),
+        triage_level=result.get("triage_level", "ROUTINE"),
+        urgency_score=result.get("urgency_score", 1),
+        detected_red_flags=result.get("detected_red_flags", []),
+        clinical_rationale=result.get("clinical_rationale", ""),
+        patient_warning_message=result.get("patient_warning_message", ""),
+        recommended_department=result.get("recommended_department", "General Medicine"),
     )
 
 

@@ -9,6 +9,7 @@ from app.models.intake_turn import IntakeTurn
 from app.models.document_record import DocumentRecord
 from app.models.user import User
 from app.models.prescription import Prescription
+from app.models.hospital_template import HospitalTemplate
 
 __all__ = [
     "Base",
@@ -22,4 +23,5 @@ __all__ = [
     "DocumentRecord",
     "User",
     "Prescription",
+    "HospitalTemplate",
 ]

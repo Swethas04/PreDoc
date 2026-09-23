@@ -303,13 +303,25 @@ export default function TriageDashboard({ onNavigateCase, onNavigateIntake, auth
                     <span className="text-xs text-[#6B7A99] bg-[#F6F9FF] px-3 py-1 rounded-full">
                       Status: <strong className="text-[#1A2B4C]">{visit.status}</strong>
                     </span>
+
+                    {visit.created_at && (
+                      <span className="text-[11px] text-[#6B7A99] flex items-center gap-1 font-mono">
+                        <Clock className="w-3 h-3 text-[#94A3B8]" />
+                        {new Date(visit.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
                   </div>
 
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2.5 flex-wrap">
                       <h3 className="text-lg font-bold text-[#1A2B4C]">
                         {visit.patient_name}
                       </h3>
+                      {visit.patient_code && (
+                        <span className="bg-[#112347] text-white text-[11px] font-mono font-bold px-2 py-0.5 rounded-lg">
+                          ID: {visit.patient_code}
+                        </span>
+                      )}
                       {visit.patient_age && (
                         <span className="text-xs text-[#6B7A99]">
                           ({visit.patient_age} yrs, {visit.language === 'hi' ? 'हिंदी' : 'English'})

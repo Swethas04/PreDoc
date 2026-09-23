@@ -1,4 +1,4 @@
-from typing import Literal, Optional, List
+from typing import Literal, Optional, List, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -82,9 +82,28 @@ class IntakeRespondResponse(BaseModel):
     # Adaptive questioning: list of step IDs to inject after 'duration' (e.g. ["fever_details"])
     # Only populated when step == "chief_complaint" and relevant symptoms detected in voice transcript
     suggested_adaptive_steps: Optional[List[str]] = None
+    emergency_triage: Optional[Dict[str, Any]] = None
 
 
 class IntakeTurnsResponse(BaseModel):
     visit_id: int
     turns: List[IntakeTurnRead]
     total: int
+
+
+class EvaluateEmergencyRequest(BaseModel):
+    text: str
+    patient_id: Optional[int] = None
+    visit_id: Optional[int] = None
+    language: Optional[str] = "en"
+
+
+class EvaluateEmergencyResponse(BaseModel):
+    is_emergency: bool = False
+    triage_level: str = "ROUTINE"  # "CRITICAL", "URGENT", "ROUTINE"
+    urgency_score: int = 1
+    detected_red_flags: List[str] = []
+    clinical_rationale: str
+    patient_warning_message: str
+    recommended_department: str
+

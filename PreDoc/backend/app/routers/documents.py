@@ -23,6 +23,7 @@ from app.services.document_storage import (
     detect_mime_type,
     ALLOWED_EXTENSIONS,
 )
+from app.services.gemini import evaluate_emergency_triage
 
 logger = logging.getLogger("predoc.documents")
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
@@ -133,13 +134,83 @@ async def upload_document(
     db.commit()
     db.refresh(doc_record)
 
+    # Run Emergency Medicine Clinical Triage AI evaluation on uploaded prescription/record
+    is_img = saved_file["mime_type"].startswith("image/")
+    try:
+        triage_eval = evaluate_emergency_triage(
+            text=f"{clean_label or ''} {clean_filename}",
+            image_bytes=file_bytes if (is_img and len(file_bytes) <= 5 * 1024 * 1024) else None,
+            mime_type=saved_file["mime_type"] if is_img else None,
+        )
+    except Exception as e:
+        logger.warning("[Document Upload] Triage evaluation error: %s", e)
+        triage_eval = {
+            "is_emergency": False,
+            "triage_level": "ROUTINE",
+            "urgency_score": 1,
+            "detected_red_flags": [],
+            "clinical_rationale": "Document processed and recorded.",
+            "patient_warning_message": "",
+            "recommended_department": "General Medicine",
+        }
+
+    try:
+        if triage_eval.get("is_emergency"):
+            alert_reason = f"Document Alert: {', '.join(triage_eval.get('detected_red_flags', [])) or triage_eval.get('clinical_rationale')}"
+            rec_dept = triage_eval.get("recommended_department", "Emergency Medicine")
+
+            v = None
+            if resolved_visit_id:
+                v = db.query(Visit).filter(Visit.id == resolved_visit_id).first()
+            elif resolved_patient_id:
+                v = (
+                    db.query(Visit)
+                    .filter(
+                        Visit.patient_id == resolved_patient_id,
+                        Visit.status.in_(["intake_in_progress", "triaged", "in_queue", "pending"]),
+                    )
+                    .order_by(Visit.id.desc())
+                    .first()
+                )
+                if not v:
+                    v = Visit(
+                        patient_id=resolved_patient_id,
+                        status="intake_in_progress",
+                        urgency_flag=True,
+                        urgency_reason=alert_reason,
+                        department=rec_dept,
+                    )
+                    db.add(v)
+                    db.flush()
+                    doc_record.visit_id = v.id
+                    db.commit()
+
+            if v:
+                v.urgency_flag = True
+                v.urgency_reason = alert_reason
+                if rec_dept:
+                    v.department = rec_dept
+                # Save turn description
+                turn = IntakeTurn(
+                    visit_id=v.id,
+                    step="chief_complaint",
+                    question="Uploaded Document Evaluation",
+                    transcript=f"Uploaded '{clean_filename}': {triage_eval.get('clinical_rationale')}",
+                    language="en",
+                )
+                db.add(turn)
+                db.commit()
+    except Exception as e:
+        logger.warning("[Document Upload] Visit urgency update failed: %s", e)
+
     logger.info(
-        "[Document Upload] Stored document ID %d for patient_id=%d, visit_id=%s, file='%s', mime='%s'",
+        "[Document Upload] Stored document ID %d for patient_id=%d, visit_id=%s, file='%s', mime='%s', emergency=%s",
         doc_record.id,
         doc_record.patient_id,
         doc_record.visit_id,
         doc_record.filename,
         doc_record.mime_type,
+        triage_eval.get("is_emergency", False),
     )
 
     return DocumentUploadResponse(
@@ -153,6 +224,8 @@ async def upload_document(
         file_url=f"/api/documents/{doc_record.id}/raw",
         download_url=f"/api/documents/{doc_record.id}/download",
         created_at=doc_record.created_at,
+        is_emergency=triage_eval.get("is_emergency", False),
+        triage_evaluation=triage_eval,
         message="Document uploaded and stored successfully.",
     )
 

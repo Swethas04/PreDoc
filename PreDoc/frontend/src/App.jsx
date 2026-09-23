@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Activity,
   CheckCircle2,
@@ -12,14 +12,17 @@ import {
   LogOut,
   Heart,
   Pill,
+  Layers,
 } from 'lucide-react';
 import PatientKiosk from './components/PatientKiosk';
 import CaseDraftPage from './components/CaseDraftPage';
 import TriageDashboard from './components/TriageDashboard';
 import DoctorDashboard from './components/DoctorDashboard';
 import PrescriptionTab from './components/PrescriptionTab';
+import TemplateEditor from './components/TemplateEditor';
 import RoleLanding from './components/RoleLanding';
 import StaffLogin from './components/StaffLogin';
+import PublicPrescriptionPage from './components/PublicPrescriptionPage';
 
 // ─── Backend health hook ──────────────────────────────────────────────────────
 function useBackendHealth() {
@@ -166,6 +169,7 @@ function DoctorShell({
   const [activeTab, setActiveTab] = useState(() => {
     if (isNurse) return 'triage';
     if (window.location.pathname.startsWith('/case/')) return 'case';
+    if (window.location.pathname.startsWith('/doctor/templates') || window.location.pathname.startsWith('/templates')) return 'templates';
     if (window.location.pathname.startsWith('/doctor/')) {
       const m = window.location.pathname.match(/\/doctor\/(\d+)/);
       if (m) return 'case';
@@ -183,6 +187,8 @@ function DoctorShell({
         setActiveTab(isNurse ? 'triage' : 'case');
       } else if (window.location.pathname.startsWith('/triage')) {
         setActiveTab('triage');
+      } else if (window.location.pathname.startsWith('/doctor/templates') || window.location.pathname.startsWith('/templates')) {
+        setActiveTab('templates');
       } else {
         setActiveTab(isNurse ? 'triage' : 'doctor');
       }
@@ -234,6 +240,7 @@ function DoctorShell({
     setActiveTab(tab);
     if (tab === 'case') window.history.pushState(null, '', `/case/${currentVisitId}`);
     else if (tab === 'triage') window.history.pushState(null, '', '/triage');
+    else if (tab === 'templates') window.history.pushState(null, '', '/doctor/templates');
     else window.history.pushState(null, '', '/doctor');
   };
 
@@ -270,6 +277,15 @@ function DoctorShell({
       id: 'prescriptions',
       label: 'Prescriptions',
       icon: Pill,
+      badge: null,
+      badgeColor: 'bg-[#EAF1FF] text-[#2F6FED]',
+      badgeActiveColor: 'bg-white text-[#2F6FED]',
+      roles: ['doctor'],
+    },
+    {
+      id: 'templates',
+      label: 'Letterhead Templates',
+      icon: Layers,
       badge: null,
       badgeColor: 'bg-[#EAF1FF] text-[#2F6FED]',
       badgeActiveColor: 'bg-white text-[#2F6FED]',
@@ -413,6 +429,14 @@ function DoctorShell({
             onAuthError={onLogout}
           />
         )}
+        {activeTab === 'templates' && !isNurse && (
+          <TemplateEditor
+            visitId={currentVisitId}
+            currentUser={currentUser}
+            authToken={authToken}
+            onAuthError={onLogout}
+          />
+        )}
       </main>
 
       <footer className="mt-12 bg-white border-t border-[#E2E8F4] py-5">
@@ -435,11 +459,32 @@ function DoctorShell({
 
 // ─── Root App ─────────────────────────────────────────────────────────────────
 export default function App() {
+  // Handle public prescription verification route (/rx/view/:token)
+  const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
+  if (currentPath.startsWith('/rx/view/')) {
+    const rxToken = currentPath.replace('/rx/view/', '').split('/')[0].split('?')[0];
+    return <PublicPrescriptionPage token={rxToken} />;
+  }
+
   const { healthData, loading, error, fetchHealth } = useBackendHealth();
 
   // Role state: null = show landing, 'patient' or 'doctor'
   const [userRole, setUserRole] = useState(() => {
-    return sessionStorage.getItem('predoc_role') || null;
+    const stored = sessionStorage.getItem('predoc_role');
+    if (stored) return stored;
+    if (typeof window !== 'undefined') {
+      const p = window.location.pathname;
+      if (p.startsWith('/intake') || p.startsWith('/patient')) return 'patient';
+      if (
+        p.startsWith('/doctor') ||
+        p.startsWith('/case') ||
+        p.startsWith('/triage') ||
+        p.startsWith('/templates')
+      ) {
+        return 'doctor';
+      }
+    }
+    return null;
   });
 
   // Staff JWT auth state
@@ -456,7 +501,7 @@ export default function App() {
     }
   });
 
-  const handleSelectRole = (role) => {
+  const handleSelectRole = useCallback((role) => {
     sessionStorage.setItem('predoc_role', role);
     setUserRole(role);
     if (role === 'patient') {
@@ -464,18 +509,18 @@ export default function App() {
     } else {
       window.history.replaceState(null, '', '/doctor');
     }
-  };
+  }, []);
 
-  const handleLoginSuccess = ({ token, user }) => {
+  const handleLoginSuccess = useCallback(({ token, user }) => {
     setAuthToken(token);
     setCurrentUser(user);
     sessionStorage.setItem('predoc_auth_token', token);
     sessionStorage.setItem('predoc_user', JSON.stringify(user));
     sessionStorage.setItem('predoc_role', 'doctor');
     setUserRole('doctor');
-  };
+  }, []);
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
     } catch {
@@ -488,13 +533,13 @@ export default function App() {
     sessionStorage.removeItem('predoc_role');
     setUserRole(null);
     window.history.replaceState(null, '', '/');
-  };
+  }, []);
 
-  const handleSwitchRole = () => {
+  const handleSwitchRole = useCallback(() => {
     sessionStorage.removeItem('predoc_role');
     setUserRole(null);
     window.history.replaceState(null, '', '/');
-  };
+  }, []);
 
   // Landing page — no role selected
   if (!userRole) {

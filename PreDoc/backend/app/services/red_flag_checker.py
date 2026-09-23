@@ -236,6 +236,92 @@ RED_FLAG_RULES: List[RedFlagRule] = [
             ],
         ],
     ),
+    # 8. Rescue Medications: Sublingual Nitroglycerin / Sorbitrate (Acute Angina / MI)
+    RedFlagRule(
+        rule_id="med_sublingual_nitroglycerin",
+        department="Emergency Medicine / Cardiology",
+        urgency_level="critical",
+        reason="High-risk rescue cardiovascular medication (Nitroglycerin / Sorbitrate) detected. Suggests acute coronary syndrome, unstable angina, or acute ischemic event.",
+        symptom_groups=[
+            [
+                r"\bnitroglycerin\b",
+                r"\bsorbitrate\b",
+                r"\bglyceryl trinitrate\b",
+                r"\bnitrospray\b",
+                r"\bgtn\b",
+                r"\bangispan\b",
+                r"\bsublingual nitro\b",
+                r"\bmonit\b",
+                r"\bisosorbide\b",
+            ]
+        ],
+    ),
+    # 9. Rescue Medications: Epinephrine / EpiPen (Anaphylaxis / Severe Airway Shock)
+    RedFlagRule(
+        rule_id="med_epinephrine_anaphylaxis",
+        department="Emergency Medicine",
+        urgency_level="critical",
+        reason="Emergency auto-injector or epinephrine detected. Indicates life-threatening anaphylaxis, acute angioedema, or severe airway compromise.",
+        symptom_groups=[
+            [
+                r"\bepipen\b",
+                r"\bepinephrine\b",
+                r"\badrenaline\b",
+                r"\bauto-injector\b",
+                r"\banaphylaxis\b",
+                r"\bangioedema\b",
+            ]
+        ],
+    ),
+    # 10. Stroke / Neurological: Facial drooping, slurred speech, acute paralysis
+    RedFlagRule(
+        rule_id="neuro_stroke_fast",
+        department="Emergency Medicine / Neurology",
+        urgency_level="critical",
+        reason="Acute focal neurological deficit (facial droop, speech impairment, limb weakness) matching FAST criteria for acute stroke/TIA.",
+        symptom_groups=[
+            [
+                r"\bfacial droop\b",
+                r"\bface drooping\b",
+                r"\bslurred speech\b",
+                r"\bunable to speak\b",
+                r"\bsudden weakness\b",
+                r"\bparalysis\b",
+                r"\bhemiplegia\b",
+                r"\bstroke\b",
+                r"चेहरे का टेढ़ा होना",
+                r"बोली में लड़खड़ाहट",
+                r"लकवा",
+            ]
+        ],
+    ),
+    # 11. Sepsis: High fever + confusion / altered sensorium / extreme lethargy
+    RedFlagRule(
+        rule_id="sepsis_fever_altered_mental",
+        department="Emergency Medicine / Critical Care",
+        urgency_level="critical",
+        reason="High fever with altered mental status or confusion strongly indicates severe sepsis or central nervous system infection.",
+        symptom_groups=[
+            [
+                r"\bhigh fever\b",
+                r"\bsevere fever\b",
+                r"\b10[3-6]\s*°?f\b",
+                r"\b39\.[5-9]\s*°?c\b",
+                r"\b4[0-2]\s*°?c\b",
+                r"तेज बुखार",
+            ],
+            [
+                r"\bconfusion\b",
+                r"\baltered sensorium\b",
+                r"\bdisoriented\b",
+                r"\bunresponsive\b",
+                r"\bdrowsy\b",
+                r"\bdelirious\b",
+                r"बेहोशी की हालत",
+                r"भ्रमित",
+            ],
+        ],
+    ),
 ]
 
 
@@ -280,3 +366,50 @@ def evaluate_red_flags(transcripts: List[str]) -> RedFlagResult:
             )
 
     return RedFlagResult(is_urgent=False)
+
+
+def evaluate_emergency_rules(text: str) -> dict:
+    """
+    Deterministic clinical rule evaluator conforming to the Emergency Medicine Clinical Triage AI schema.
+    Used for instant real-time evaluation and fallback if Gemini is offline/rate-limited.
+    """
+    if not text or not text.strip():
+        return {
+            "is_emergency": False,
+            "triage_level": "ROUTINE",
+            "urgency_score": 1,
+            "detected_red_flags": [],
+            "clinical_rationale": "No critical or acute emergency symptoms detected.",
+            "patient_warning_message": "Condition appears stable. Proceed with standard consultation.",
+            "recommended_department": "General Medicine",
+        }
+
+    res = evaluate_red_flags([text])
+    if res.is_urgent:
+        is_crit = res.urgency_level in ("critical", "emergency")
+        triage_level = "CRITICAL" if is_crit else "URGENT"
+        score = 5 if is_crit else 4
+        patient_warning = (
+            "🚨 CRITICAL MEDICAL ALERT: Immediate emergency medical care required! Please proceed directly to the Emergency Room or dial 108 / 911 immediately."
+            if is_crit
+            else "⚠️ URGENT CLINICAL ATTENTION: Your symptoms require prompt clinical evaluation. Please see a physician within 1-2 hours."
+        )
+        return {
+            "is_emergency": is_crit,
+            "triage_level": triage_level,
+            "urgency_score": score,
+            "detected_red_flags": res.matched_triggers or [res.reason or "High acuity clinical marker"],
+            "clinical_rationale": res.reason or "Clinical red flag triggers met.",
+            "patient_warning_message": patient_warning,
+            "recommended_department": res.department or "Emergency Medicine",
+        }
+
+    return {
+        "is_emergency": False,
+        "triage_level": "ROUTINE",
+        "urgency_score": 1,
+        "detected_red_flags": [],
+        "clinical_rationale": "No life-threatening clinical triggers identified. Standard triage queue recommended.",
+        "patient_warning_message": "Your condition is recorded. Please wait for the physician consultation.",
+        "recommended_department": "General Medicine",
+    }

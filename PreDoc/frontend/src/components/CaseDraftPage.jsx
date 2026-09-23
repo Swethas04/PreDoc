@@ -579,13 +579,13 @@ export default function CaseDraftPage({
             )}
 
             <div className="w-14 h-14 rounded-full bg-[#EAF1FF] text-[#2F6FED] flex items-center justify-center font-bold text-lg flex-shrink-0">
-              P
+              {caseData?.patient?.name ? caseData.patient.name.trim().charAt(0).toUpperCase() : 'P'}
             </div>
 
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-[#1A2B4C] tracking-tight">
-                  Patient Case Review
+                  {caseData?.patient?.name || 'Patient Case Review'}
                 </h1>
                 <span className="px-3 py-1 rounded-full text-xs font-mono bg-[#EAF1FF] text-[#2F6FED]">
                   Visit #{visitId}

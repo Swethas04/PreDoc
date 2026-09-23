@@ -32,10 +32,36 @@ class PrescriptionResponse(BaseModel):
     medicines: List[MedicineItem]
     general_advice: Optional[str] = None
     follow_up: Optional[str] = None
+    share_token: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PublicPrescriptionView(BaseModel):
+    id: int
+    visit_id: int
+    share_token: str
+    patient_name: str = "Patient"
+    patient_code: Optional[str] = None
+    patient_age: Optional[int] = None
+    patient_gender: Optional[str] = None
+    doctor_name: Optional[str] = "Dr. Attending Physician"
+    diagnosis: Optional[str] = None
+    medicines: List[MedicineItem] = []
+    general_advice: Optional[str] = None
+    follow_up: Optional[str] = None
+    issued_at: datetime
+    expires_at: Optional[datetime] = None
+    is_expired: bool = False
+    is_verified: bool = True
+    clinic_name: str = "PreDoc Healthcare Center"
+    clinic_department: str = "Department of Internal Medicine & Clinical Triage"
+
+    model_config = {"from_attributes": True}
+
 
 
 class MedicineSearchResult(BaseModel):

@@ -89,12 +89,46 @@ export default function PrescriptionTab({
   const [followUp, setFollowUp] = useState('Review after 5 days if symptoms persist');
   const [medicinesList, setMedicinesList] = useState([]);
 
+  // Hospital Letterhead Template State
+  const [activeTemplate, setActiveTemplate] = useState(null);
+  const [availableTemplates, setAvailableTemplates] = useState([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState(null);
+  const [printing, setPrinting] = useState(false);
+
   // Refs
   const medicineInputRef = useRef(null);
   const suggestionsBoxRef = useRef(null);
   const loadedVisitIdRef = useRef(null);
 
-  // ── Load Prescription Once on Mount or Visit Change ─────────────────────────
+  // ── Load Templates on Mount ────────────────────────────────────────────────
+  useEffect(() => {
+    async function loadTemplates() {
+      try {
+        const headers = {};
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        const [activeRes, listRes] = await Promise.all([
+          fetch(`${API_BASE}/templates/active`, { headers }),
+          fetch(`${API_BASE}/templates`, { headers }),
+        ]);
+        if (activeRes.ok) {
+          const activeData = await activeRes.json();
+          setActiveTemplate(activeData);
+          if (activeData?.id) setSelectedTemplateId(activeData.id);
+        }
+        if (listRes.ok) {
+          const listData = await listRes.json();
+          setAvailableTemplates(listData || []);
+        }
+      } catch (err) {
+        console.error('Failed to load letterhead templates:', err);
+      }
+    }
+    loadTemplates();
+  }, [authToken]);
+
+  const [resolvedPatient, setResolvedPatient] = useState(patientData || null);
+
+  // ── Load Prescription & Patient Info Once on Mount or Visit Change ───────────
   useEffect(() => {
     if (!visitId || loadedVisitIdRef.current === visitId) return;
 
@@ -105,14 +139,18 @@ export default function PrescriptionTab({
         const headers = { 'Content-Type': 'application/json' };
         if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
-        const res = await fetch(`${API_BASE}/prescriptions/visit/${visitId}`, { headers });
-        if (res.status === 401 && onAuthError) {
+        const [rxRes, caseRes] = await Promise.all([
+          fetch(`${API_BASE}/prescriptions/visit/${visitId}`, { headers }),
+          fetch(`${API_BASE}/visits/${visitId}/case`, { headers }),
+        ]);
+
+        if (rxRes.status === 401 && onAuthError) {
           onAuthError();
           return;
         }
 
-        if (res.ok && isMounted) {
-          const data = await res.json();
+        if (rxRes.ok && isMounted) {
+          const data = await rxRes.json();
           if (data) {
             setDiagnosis(data.diagnosis || '');
             setGeneralAdvice(data.general_advice || '');
@@ -121,10 +159,18 @@ export default function PrescriptionTab({
               setMedicinesList(data.medicines);
             }
           }
-          loadedVisitIdRef.current = visitId;
         }
+
+        if (caseRes.ok && isMounted) {
+          const cData = await caseRes.json();
+          if (cData?.patient) {
+            setResolvedPatient(cData.patient);
+          }
+        }
+
+        loadedVisitIdRef.current = visitId;
       } catch (err) {
-        console.error('Failed to load prescription:', err);
+        console.error('Failed to load prescription or patient data:', err);
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -326,20 +372,67 @@ export default function PrescriptionTab({
       }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 5000);
+      return saved;
     } catch (err) {
       console.error('Save prescription failed:', err);
       setErrorMessage(err.message || 'Could not save prescription. Please try again.');
+      throw err;
     } finally {
       setSaving(false);
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handlePrintPrescriptionPdf = async () => {
+    try {
+      setPrinting(true);
+      setErrorMessage(null);
+
+      // Save latest state first so any unsaved medicine edits are included in print
+      if (medicinesList.length > 0) {
+        try {
+          await handleSavePrescription();
+        } catch {
+          // If save fails, still attempt print if previously recorded
+        }
+      }
+
+      const headers = {};
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+      const printUrl = `${API_BASE}/prescriptions/visit/${visitId}/print${
+        selectedTemplateId ? `?template_id=${selectedTemplateId}` : ''
+      }`;
+
+      const res = await fetch(printUrl, { headers });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Could not generate prescription PDF');
+      }
+
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+
+      // Open in a new tab for print preview
+      const newTab = window.open(blobUrl, '_blank');
+      if (!newTab) {
+        // Fallback: trigger download if popup was blocked
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `Prescription_Visit_${visitId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    } catch (err) {
+      console.error('Print PDF failed:', err);
+      setErrorMessage(err.message || 'Failed to generate printable PDF.');
+    } finally {
+      setPrinting(false);
+    }
   };
 
-  const patientName = patientData?.name || `Patient #${visitId}`;
-  const patientAge = patientData?.age ? `${patientData.age} yrs` : 'N/A';
+  const patientName = resolvedPatient?.name || patientData?.name || `Patient #${visitId}`;
+  const patientAge = (resolvedPatient?.age || patientData?.age) ? `${resolvedPatient?.age || patientData?.age} yrs` : 'N/A';
 
   return (
     <div className="space-y-6">
@@ -364,15 +457,42 @@ export default function PrescriptionTab({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Template Selector Badge / Dropdown */}
+          {availableTemplates.length > 0 && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F8FAFC] border border-[#CBD5E1] text-xs font-bold text-[#475569]">
+              <FileText className="w-3.5 h-3.5 text-[#2F6FED]" />
+              <select
+                value={selectedTemplateId || ''}
+                onChange={(e) => setSelectedTemplateId(e.target.value ? Number(e.target.value) : null)}
+                className="bg-transparent border-none text-xs font-bold text-[#1A2B4C] focus:outline-none cursor-pointer"
+                title="Choose letterhead layout for print output"
+              >
+                <option value="">Default PreDoc Layout</option>
+                {availableTemplates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} {t.is_default ? '(Default)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {medicinesList.length > 0 && (
             <button
+              id="print-prescription-top-btn"
               type="button"
-              onClick={handlePrint}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-white hover:bg-[#F6F9FF] border border-[#CBD5E1] text-[#1A2B4C] text-xs font-bold transition shadow-xs"
+              disabled={printing}
+              onClick={handlePrintPrescriptionPdf}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-white hover:bg-[#F6F9FF] border-2 border-[#2F6FED] text-[#2F6FED] text-xs font-extrabold transition shadow-xs hover:shadow-md disabled:opacity-50"
+              title="Print prescription on custom hospital letterhead PDF"
             >
-              <Printer className="w-4 h-4 text-[#2F6FED]" />
-              <span>Print Rx</span>
+              {printing ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Printer className="w-4 h-4" />
+              )}
+              <span>{printing ? 'Generating PDF...' : 'Print Prescription (PDF)'}</span>
             </button>
           )}
 
@@ -872,29 +992,47 @@ export default function PrescriptionTab({
               )}
             </div>
 
-            {/* Bottom Actions: Save Prescription */}
+            {/* Bottom Actions: Save & Print Prescription */}
             <div className="pt-3 border-t border-[#E2E8F4] space-y-2">
-              <button
-                type="button"
-                id="save-prescription-bottom-btn"
-                disabled={saving || medicinesList.length === 0}
-                onClick={handleSavePrescription}
-                className="w-full py-3.5 rounded-2xl bg-[#2F6FED] hover:bg-[#255BC7] text-white text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition shadow-md hover:shadow-lg disabled:opacity-50"
-              >
-                {saving ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : saveSuccess ? (
-                  <Check className="w-4 h-4" />
-                ) : (
-                  <Save className="w-4 h-4" />
-                )}
-                <span>
-                  {saving ? 'Saving...' : saveSuccess ? '✓ Prescription Saved!' : 'Save Prescription to Record'}
-                </span>
-              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  id="print-prescription-bottom-btn"
+                  disabled={printing || medicinesList.length === 0}
+                  onClick={handlePrintPrescriptionPdf}
+                  className="w-full py-3 rounded-2xl bg-white hover:bg-[#F8FAFC] border-2 border-[#2F6FED] text-[#2F6FED] text-xs font-extrabold flex items-center justify-center gap-1.5 transition shadow-xs hover:shadow-md disabled:opacity-50"
+                  title="Generate print-ready PDF using hospital letterhead"
+                >
+                  {printing ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Printer className="w-4 h-4" />
+                  )}
+                  <span>{printing ? 'Generating...' : 'Print Rx (PDF)'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  id="save-prescription-bottom-btn"
+                  disabled={saving || medicinesList.length === 0}
+                  onClick={handleSavePrescription}
+                  className="w-full py-3 rounded-2xl bg-[#2F6FED] hover:bg-[#255BC7] text-white text-xs font-extrabold flex items-center justify-center gap-1.5 transition shadow-md hover:shadow-lg disabled:opacity-50"
+                >
+                  {saving ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : saveSuccess ? (
+                    <Check className="w-4 h-4" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
+                  <span>
+                    {saving ? 'Saving...' : saveSuccess ? '✓ Saved!' : 'Save Rx'}
+                  </span>
+                </button>
+              </div>
 
               <p className="text-[10px] text-center text-[#94A3B8]">
-                Prescription becomes part of Visit #{visitId} patient record.
+                Official physician order recorded under Visit #{visitId}.
               </p>
             </div>
           </div>

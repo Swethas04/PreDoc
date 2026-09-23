@@ -34,6 +34,7 @@ import {
 import DocumentUpload from './DocumentUpload';
 import MedicalTimeline from './MedicalTimeline';
 import PatientIDCard from './PatientIDCard';
+import CriticalTriageModal from './CriticalTriageModal';
 
 // ─── Clinical step metadata ───────────────────────────────────────────────────
 const DEFAULT_CLINICAL_STEPS = [
@@ -2259,6 +2260,7 @@ export default function IntakeFlow({
   const [urgencyFlag, setUrgencyFlag] = useState(false);
   const [urgencyDept, setUrgencyDept] = useState(null);
   const [urgencyReason, setUrgencyReason] = useState(null);
+  const [emergencyModalData, setEmergencyModalData] = useState(null);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -2686,10 +2688,21 @@ export default function IntakeFlow({
         },
       ]);
 
-      if (data.urgency_flag) {
+      if (data.urgency_flag || data.emergency_triage?.is_emergency) {
         setUrgencyFlag(true);
         setUrgencyDept(data.department || 'Emergency');
         setUrgencyReason(data.urgency_reason || 'Urgent symptom combination detected');
+        setEmergencyModalData(
+          data.emergency_triage || {
+            is_emergency: true,
+            triage_level: 'CRITICAL',
+            urgency_score: 5,
+            detected_red_flags: data.matched_triggers || ['Critical red flag symptoms detected'],
+            clinical_rationale: data.urgency_reason || 'Emergency symptom markers detected during intake.',
+            patient_warning_message: 'Please seek immediate emergency medical attention.',
+            recommended_department: data.department || 'Emergency Medicine',
+          }
+        );
       }
 
       // Completion: trust frontend clinicalSteps length as source of truth.
@@ -3299,6 +3312,14 @@ export default function IntakeFlow({
           isPatientView={isPatientView}
         />
       )}
+
+      {/* Emergency Critical Triage Modal */}
+      <CriticalTriageModal
+        isOpen={!!emergencyModalData}
+        onClose={() => setEmergencyModalData(null)}
+        triageData={emergencyModalData}
+        language={language}
+      />
     </div>
   );
 }

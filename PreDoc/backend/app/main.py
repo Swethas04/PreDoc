@@ -12,6 +12,7 @@ from app.routers.auth import router as auth_router
 from app.routers.patient_profiles import router as patient_profiles_router
 from app.routers.consultations import router as consultations_router
 from app.routers.prescriptions import router as prescriptions_router
+from app.routers.templates import router as templates_router
 
 logger = logging.getLogger("predoc.main")
 
@@ -64,6 +65,7 @@ app.include_router(visits_router)
 app.include_router(patient_profiles_router)
 app.include_router(consultations_router)
 app.include_router(prescriptions_router)
+app.include_router(templates_router)
 
 # Mount static uploads directory for direct browser viewing
 from fastapi.staticfiles import StaticFiles

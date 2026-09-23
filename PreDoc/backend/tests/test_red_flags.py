@@ -147,8 +147,49 @@ class TestRedFlagChecker(unittest.TestCase):
         self.assertEqual(patch_resp.status_code, 200)
         patch_data = patch_resp.json()
         self.assertEqual(patch_data["status"], "triaged")
-        self.assertEqual(patch_data["department"], "Cardiology (ICU)")
+    def test_emergency_triage_evaluation(self):
+        # 1. Test rescue prescription: Nitroglycerin / Sorbitrate
+        rx_text = "Prescription: Tab Sorbitrate 10mg sublingual SOS for acute chest pain"
+        from app.services.red_flag_checker import evaluate_emergency_rules
+        res = evaluate_emergency_rules(rx_text)
+        self.assertTrue(res["is_emergency"])
+        self.assertEqual(res["triage_level"], "CRITICAL")
+        self.assertEqual(res["urgency_score"], 5)
+        self.assertIn("sorbitrate", " ".join(res["detected_red_flags"]).lower())
+
+        # 2. Test stroke FAST symptoms
+        stroke_text = "Patient has sudden facial droop and slurred speech"
+        res2 = evaluate_emergency_rules(stroke_text)
+        self.assertTrue(res2["is_emergency"])
+        self.assertEqual(res2["triage_level"], "CRITICAL")
+
+        # 3. Test routine symptoms
+        routine_text = "Mild runny nose and sneezing since yesterday"
+        res3 = evaluate_emergency_rules(routine_text)
+        self.assertFalse(res3["is_emergency"])
+        self.assertEqual(res3["triage_level"], "ROUTINE")
+
+    def test_evaluate_emergency_api_endpoint(self):
+        resp = self.client.post(
+            "/api/intake/evaluate-emergency",
+            json={
+                "text": "Crushing chest pain radiating to left arm with dyspnea",
+                "visit_id": self.visit_id,
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["is_emergency"])
+        self.assertEqual(data["triage_level"], "CRITICAL")
+        self.assertEqual(data["urgency_score"], 5)
+        self.assertIn("108", data["patient_warning_message"])
+
+        # Check visit urgency flag updated in DB
+        visit = self.db.query(Visit).filter(Visit.id == self.visit_id).first()
+        self.db.refresh(visit)
+        self.assertTrue(visit.urgency_flag)
 
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -99,3 +99,59 @@
 .animate-recording-pulse {
   animation: softPulse 1.5s infinite;
 }
+
+/* ─── Pharmacy-Friendly Prescription Print Styles ─────────────────────────── */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm 12mm 12mm;
+  }
+
+  body {
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+    font-size: 11pt !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide all interactive app shell elements during printing */
+  header,
+  nav,
+  footer,
+  button,
+  .no-print,
+  #backend-status-pill,
+  .kiosk-nav-bar,
+  .app-header-bar,
+  .tabs-navigation-bar,
+  .modal-backdrop,
+  .action-buttons-group {
+    display: none !important;
+  }
+
+  /* Make printable prescription view expand seamlessly */
+  .printable-prescription-sheet {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #FFFFFF !important;
+  }
+
+  .prescription-medicine-row {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .prescription-footer-block {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+

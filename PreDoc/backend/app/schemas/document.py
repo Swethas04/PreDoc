@@ -38,6 +38,8 @@ class DocumentUploadResponse(BaseModel):
     file_url: Optional[str] = None
     download_url: Optional[str] = None
     created_at: Optional[datetime] = None
+    is_emergency: bool = False
+    triage_evaluation: Optional[Dict[str, Any]] = None
     message: str = "Document uploaded and stored successfully."
 
 
@@ -53,6 +55,8 @@ class ExtractResponse(BaseModel):
     file_url: Optional[str] = None
     download_url: Optional[str] = None
     created_at: Optional[datetime] = None
+    is_emergency: bool = False
+    triage_evaluation: Optional[Dict[str, Any]] = None
 
 
 class DocumentListResponse(BaseModel):
