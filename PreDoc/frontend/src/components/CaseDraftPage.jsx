@@ -40,6 +40,7 @@ import {
   File,
 } from 'lucide-react';
 import MedicalTimeline from './MedicalTimeline';
+import PrescriptionTab from './PrescriptionTab';
 
 const API_BASE = '/api';
 
@@ -128,6 +129,7 @@ export default function CaseDraftPage({
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState('case'); // 'case' | 'prescription'
 
   // Helper for auth headers
   const getAuthHeaders = useCallback((extra = {}) => ({
@@ -775,10 +777,51 @@ export default function CaseDraftPage({
         )}
       </div>
 
-      {/* ── Main Two-Column View: SOAP Section Cards + Evidence Panel ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: SOAP Draft Cards (Col 7 or 12) */}
-        <div className={`${sidePanelOpen ? 'lg:col-span-7' : 'lg:col-span-12'} space-y-5 transition-all duration-200`}>
+      {/* ── Mode Switcher: Clinical Case Review vs Prescription ── */}
+      <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white border border-[#E2E8F4] shadow-xs inline-flex">
+        <button
+          type="button"
+          id="tab-mode-case"
+          onClick={() => setViewMode('case')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition ${
+            viewMode === 'case'
+              ? 'bg-[#2F6FED] text-white shadow-sm'
+              : 'text-[#6B7A99] hover:text-[#1A2B4C] hover:bg-[#F6F9FF]'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          <span>Clinical Case Review</span>
+        </button>
+
+        <button
+          type="button"
+          id="tab-mode-prescription"
+          onClick={() => setViewMode('prescription')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition ${
+            viewMode === 'prescription'
+              ? 'bg-[#2F6FED] text-white shadow-sm'
+              : 'text-[#6B7A99] hover:text-[#1A2B4C] hover:bg-[#F6F9FF]'
+          }`}
+        >
+          <Pill className="w-4 h-4" />
+          <span>Prescriptions & Rx</span>
+        </button>
+      </div>
+
+      {viewMode === 'prescription' ? (
+        <PrescriptionTab
+          visitId={visitId}
+          patientData={caseData?.patient}
+          doctorName={caseData?.approved_by || 'Dr. Attending Physician'}
+          authToken={authToken}
+          onAuthError={onAuthError}
+        />
+      ) : (
+        <>
+          {/* ── Main Two-Column View: SOAP Section Cards + Evidence Panel ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Left Column: SOAP Draft Cards (Col 7 or 12) */}
+            <div className={`${sidePanelOpen ? 'lg:col-span-7' : 'lg:col-span-12'} space-y-5 transition-all duration-200`}>
           {/* Clinical Impression Card */}
           {(draft?.clinical_summary !== undefined || isEditing) && (
             <div className="rounded-2xl border border-[#E2E8F4] bg-white p-6 shadow-soft space-y-3">
@@ -1359,6 +1402,8 @@ export default function CaseDraftPage({
           </div>
         );
       })()}
+        </>
+      )}
     </div>
   );
 }

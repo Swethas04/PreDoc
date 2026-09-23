@@ -79,6 +79,9 @@ class IntakeRespondResponse(BaseModel):
     is_inaudible: bool = False
     input_type: str = "text"  # "options", "yesno", "text"
     next_input_type: Optional[str] = None  # "options", "yesno", "text"
+    # Adaptive questioning: list of step IDs to inject after 'duration' (e.g. ["fever_details"])
+    # Only populated when step == "chief_complaint" and relevant symptoms detected in voice transcript
+    suggested_adaptive_steps: Optional[List[str]] = None
 
 
 class IntakeTurnsResponse(BaseModel):

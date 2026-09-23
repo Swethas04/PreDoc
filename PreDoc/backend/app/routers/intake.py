@@ -22,6 +22,7 @@ from app.schemas.intake import (
 )
 from app.services.gemini import (
     CLINICAL_STEPS,
+    ALL_KNOWN_STEPS,
     STEP_QUESTIONS,
     detect_language,
     get_next_question,
@@ -47,11 +48,44 @@ router = APIRouter(prefix="/api/intake", tags=["Intake"])
 STEP_INPUT_TYPES = {
     "chief_complaint": "options",
     "duration": "options",
+    "fever_details": "options",   # adaptive step
+    "pain_details": "options",    # adaptive step
     "associated_symptoms": "options",
     "past_history": "yesno",
     "medications": "yesno",
     "allergies": "text",
 }
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+_FEVER_KEYWORDS = {
+    "fever", "temperature", "bukhar", "pyrexia", "febrile",
+    "\u092c\u0941\u0916\u093e\u0930",  # बुखार
+    "\u0924\u093e\u092a",              # ताप
+    "\u092c\u0941\u0916\u093e",        # बुखा (partial)
+}
+_PAIN_KEYWORDS = {
+    "pain", "ache", "aching", "hurt", "hurts", "sore", "cramp",
+    "dard", "\u0926\u0930\u094d\u0926",   # दर्द
+    "\u092a\u0940\u095c\u093e",           # पीड़ा
+    "\u0926\u0947\u0916",                 # partial
+}
+
+
+def _detect_adaptive_symptoms(transcript: str) -> list[str]:
+    """
+    Scan a chief_complaint transcript for fever/pain keywords.
+    Returns a list of adaptive step IDs to inject, e.g. ["fever_details", "pain_details"].
+    """
+    lower = transcript.lower()
+    result = []
+    if any(kw in lower for kw in _FEVER_KEYWORDS):
+        result.append("fever_details")
+    if any(kw in lower for kw in _PAIN_KEYWORDS):
+        result.append("pain_details")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +358,7 @@ async def respond_intake(
     visit_id: int = Form(...),
     step: str = Form(...),
     language: str = Form("en"),
+    next_step_hint: Optional[str] = Form(None),  # frontend tells backend what the next step is
     audio: Optional[UploadFile] = File(None),
     transcript_text: Optional[str] = Form(None),
     client_transcript: Optional[str] = Form(None),
@@ -341,9 +376,9 @@ async def respond_intake(
     if transcript_text is None and transcript is not None:
         transcript_text = transcript
 
-    # Validate step
-    if step not in CLINICAL_STEPS:
-        raise HTTPException(status_code=422, detail=f"Unknown step: {step}. Must be one of {CLINICAL_STEPS}")
+    # Validate step — accepts both base and adaptive steps
+    if step not in ALL_KNOWN_STEPS:
+        raise HTTPException(status_code=422, detail=f"Unknown step: '{step}'. Accepted steps: {sorted(ALL_KNOWN_STEPS)}")
 
     lang: Literal["en", "hi"] = "hi" if language == "hi" else "en"
 
@@ -437,8 +472,24 @@ async def respond_intake(
         db.flush()
         current_turn = new_turn
 
-    # Determine next step
-    next_step = get_next_step(step)
+    # --- Detect adaptive symptoms (voice mode, chief_complaint only) ---
+    suggested_adaptive_steps: list[str] = []
+    if step == "chief_complaint":
+        suggested_adaptive_steps = _detect_adaptive_symptoms(transcript)
+        if suggested_adaptive_steps:
+            logger.info(
+                "[Adaptive] Detected symptoms in voice transcript for Visit %d: %s",
+                visit_id, suggested_adaptive_steps,
+            )
+
+    # --- Determine next step ---
+    # If the frontend provided a next_step_hint (e.g. an adaptive step was injected),
+    # trust that. Otherwise fall back to the default linear get_next_step().
+    if next_step_hint and next_step_hint in ALL_KNOWN_STEPS:
+        next_step: Optional[str] = next_step_hint
+    else:
+        next_step = get_next_step(step)
+
     is_complete = next_step is None
 
     next_question: Optional[str] = None
@@ -450,20 +501,30 @@ async def respond_intake(
             previous_question=current_question,
         )
         # Pre-create the next turn record (question asked, awaiting response)
-        next_turn_record = IntakeTurn(
-            visit_id=visit_id,
-            step=next_step,
-            question=next_question,
-            transcript=None,
-            language=effective_lang,
+        # Skip if a pending turn for this step already exists (idempotent)
+        existing_next = (
+            db.query(IntakeTurn)
+            .filter(
+                IntakeTurn.visit_id == visit_id,
+                IntakeTurn.step == next_step,
+                IntakeTurn.transcript == None,  # noqa: E711
+            )
+            .first()
         )
-        db.add(next_turn_record)
+        if not existing_next:
+            next_turn_record = IntakeTurn(
+                visit_id=visit_id,
+                step=next_step,
+                question=next_question,
+                transcript=None,
+                language=effective_lang,
+            )
+            db.add(next_turn_record)
 
     if is_complete:
         visit.status = "intake_complete"
 
     # --- Real-Time Red-Flag Evaluation ---
-    # Fetch all completed transcript turns for this visit to detect cross-turn combinations
     all_turns = (
         db.query(IntakeTurn)
         .filter(IntakeTurn.visit_id == visit_id)
@@ -510,6 +571,7 @@ async def respond_intake(
         matched_triggers=red_flag_result.matched_triggers if red_flag_result.is_urgent else None,
         input_type=current_input_type,
         next_input_type=next_input_type,
+        suggested_adaptive_steps=suggested_adaptive_steps or None,
     )
 
 

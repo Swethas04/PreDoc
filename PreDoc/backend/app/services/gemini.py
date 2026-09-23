@@ -31,7 +31,7 @@ CANDIDATE_GEMINI_MODELS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Clinical script definition (fixed order)
+# Clinical script definition (base fixed order)
 # ---------------------------------------------------------------------------
 CLINICAL_STEPS = [
     "chief_complaint",
@@ -42,13 +42,22 @@ CLINICAL_STEPS = [
     "allergies",
 ]
 
+# Adaptive steps that can be dynamically injected after "duration"
+# based on symptoms detected in the chief_complaint response.
+ADAPTIVE_STEPS = {"fever_details", "pain_details"}
+
+# All steps the backend will accept (base + adaptive)
+ALL_KNOWN_STEPS = set(CLINICAL_STEPS) | ADAPTIVE_STEPS
+
 STEP_LABELS = {
-    "chief_complaint": {"en": "Chief Complaint", "hi": "मुख्य शिकायत"},
-    "duration": {"en": "Duration", "hi": "अवधि"},
-    "associated_symptoms": {"en": "Associated Symptoms", "hi": "संबंधित लक्षण"},
-    "past_history": {"en": "Past Medical History", "hi": "पिछला चिकित्सा इतिहास"},
-    "medications": {"en": "Current Medications", "hi": "वर्तमान दवाएं"},
-    "allergies": {"en": "Allergies", "hi": "एलर्जी"},
+    "chief_complaint":     {"en": "Chief Complaint",       "hi": "मुख्य शिकायत"},
+    "duration":            {"en": "Duration",               "hi": "अवधि"},
+    "fever_details":       {"en": "Fever Details",          "hi": "बुखार का विवरण"},
+    "pain_details":        {"en": "Pain Details",           "hi": "दर्द का विवरण"},
+    "associated_symptoms": {"en": "Associated Symptoms",   "hi": "संबंधित लक्षण"},
+    "past_history":        {"en": "Past Medical History",  "hi": "पिछला चिकित्सा इतिहास"},
+    "medications":         {"en": "Current Medications",   "hi": "वर्तमान दवाएं"},
+    "allergies":           {"en": "Allergies",              "hi": "एलर्जी"},
 }
 
 # Canonical questions used for the FIRST question of each step.
@@ -61,6 +70,14 @@ STEP_QUESTIONS = {
     "duration": {
         "en": "How long have you been experiencing this? When did it start?",
         "hi": "आप यह कब से अनुभव कर रहे हैं? यह कब शुरू हुआ?",
+    },
+    "fever_details": {
+        "en": "Do you have any chills or shivering with the fever? Any night sweats?",
+        "hi": "क्या बुखार के साथ ठंड या कंपकंपी भी लग रही है? क्या रात में पसीना आता है?",
+    },
+    "pain_details": {
+        "en": "How severe is the pain on a scale of 1 to 10? Where exactly is the pain located?",
+        "hi": "दर्द की तीव्रता 1 से 10 के पैमाने पर कितनी है? दर्द ठीक कहाँ हो रहा है?",
     },
     "associated_symptoms": {
         "en": "Are there any other symptoms you're experiencing along with this, such as fever, nausea, dizziness, or pain elsewhere?",

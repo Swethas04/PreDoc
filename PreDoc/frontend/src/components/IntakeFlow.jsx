@@ -36,7 +36,7 @@ import MedicalTimeline from './MedicalTimeline';
 import PatientIDCard from './PatientIDCard';
 
 // ─── Clinical step metadata ───────────────────────────────────────────────────
-const CLINICAL_STEPS = [
+const DEFAULT_CLINICAL_STEPS = [
   'chief_complaint',
   'duration',
   'associated_symptoms',
@@ -52,6 +52,8 @@ const STEP_LABELS = {
   past_history:        { en: 'Past medical history',  hi: 'पिछला चिकित्सा इतिहास' },
   medications:         { en: 'Current medications',   hi: 'वर्तमान दवाएं' },
   allergies:           { en: 'Allergies',              hi: 'एलर्जी' },
+  fever_details:       { en: 'Fever details',         hi: 'बुखार का विवरण' },
+  pain_details:        { en: 'Pain details',          hi: 'दर्द का विवरण' },
 };
 
 const API_BASE = '/api';
@@ -74,8 +76,9 @@ const TAP_STEPS = {
       { id: 'injury',         label: { en: 'Injury',           hi: 'चोट' },         icon: Stethoscope, transcript: { en: 'injury',           hi: 'चोट' } },
       { id: 'other',          label: { en: 'Other',            hi: 'अन्य' },        icon: HelpCircle,  transcript: { en: 'other symptoms',   hi: 'अन्य लक्षण' } },
     ],
-    buildTranscript: (selected, lang) => {
+    buildTranscript: (selected, lang, otherText) => {
       const labels = selected.map(id => {
+        if (id === 'other' && otherText && otherText.trim()) return otherText.trim();
         const opt = TAP_STEPS.chief_complaint.options.find(o => o.id === id);
         return opt?.transcript[lang] || id;
       });
@@ -105,6 +108,50 @@ const TAP_STEPS = {
     },
   },
 
+  fever_details: {
+    type: 'chip-grid',
+    question: {
+      en: "Do you have chills or shivering?",
+      hi: "क्या आपको ठंड या कंपकंपी लग रही है?",
+    },
+    multiSelect: true,
+    options: [
+      { id: 'chills',       label: { en: 'Chills',           hi: 'ठंड लगना' },        transcript: { en: 'with chills',         hi: 'ठंड के साथ' } },
+      { id: 'sweats',       label: { en: 'Night sweats',     hi: 'रात में पसीना' },  transcript: { en: 'night sweats',        hi: 'रात में पसीना आना' } },
+      { id: 'none',         label: { en: 'None of these',    hi: 'इनमें से कोई नहीं'}, transcript: { en: 'no chills',          hi: 'ठंड नहीं लग रही' } },
+    ],
+    buildTranscript: (selected, lang) => {
+      if (selected.includes('none')) {
+        return lang === 'hi' ? 'ठंड या कंपकंपी नहीं।' : 'No chills or sweats.';
+      }
+      const labels = selected.map(id => {
+        const opt = TAP_STEPS.fever_details.options.find(o => o.id === id);
+        return opt?.transcript[lang] || id;
+      });
+      if (lang === 'hi') return `बुखार का विवरण: ${labels.join(', ')}.`;
+      return `Associated fever symptoms: ${labels.join(', ')}.`;
+    },
+  },
+
+  pain_details: {
+    type: 'single-select',
+    question: {
+      en: "How severe is the pain? (1-10)",
+      hi: "दर्द कितना भयंकर है? (1-10)",
+    },
+    multiSelect: false,
+    options: [
+      { id: 'mild',   label: { en: 'Mild (1-3)',     hi: 'हल्का (1-3)' },     transcript: { en: 'Mild pain.',           hi: 'हल्का दर्द।' } },
+      { id: 'mod',    label: { en: 'Moderate (4-6)', hi: 'मध्यम (4-6)' },     transcript: { en: 'Moderate pain.',       hi: 'मध्यम दर्द।' } },
+      { id: 'severe', label: { en: 'Severe (7-10)',  hi: 'भयंकर (7-10)' },    transcript: { en: 'Severe pain.',         hi: 'भयंकर दर्द।' } },
+    ],
+    buildTranscript: (selected, lang) => {
+      const id = selected[0];
+      const opt = TAP_STEPS.pain_details.options.find(o => o.id === id);
+      return opt?.transcript[lang] || id;
+    },
+  },
+
   associated_symptoms: {
     type: 'chip-grid',
     question: {
@@ -123,12 +170,14 @@ const TAP_STEPS = {
       { id: 'diarrhea',       label: { en: 'Diarrhea',          hi: 'दस्त' },           transcript: { en: 'diarrhea',         hi: 'दस्त' } },
       { id: 'chest_pain',     label: { en: 'Chest pain',        hi: 'सीने में दर्द' }, transcript: { en: 'chest pain',       hi: 'सीने में दर्द' } },
       { id: 'none',           label: { en: 'None',              hi: 'कोई नहीं' },       transcript: { en: 'none',             hi: 'कोई नहीं' } },
+      { id: 'other',          label: { en: 'Other',             hi: 'अन्य' },           transcript: { en: 'other symptoms',   hi: 'अन्य लक्षण' } },
     ],
-    buildTranscript: (selected, lang) => {
+    buildTranscript: (selected, lang, otherText) => {
       if (selected.includes('none')) {
         return lang === 'hi' ? 'कोई अन्य लक्षण नहीं हैं।' : 'No other associated symptoms.';
       }
       const labels = selected.map(id => {
+        if (id === 'other' && otherText && otherText.trim()) return otherText.trim();
         const opt = TAP_STEPS.associated_symptoms.options.find(o => o.id === id);
         return opt?.transcript[lang] || id;
       });
@@ -233,6 +282,7 @@ const TAP_STEPS = {
 function IconGrid({ step, language, onSubmit, isProcessing }) {
   const config = TAP_STEPS[step];
   const [selected, setSelected] = useState([]);
+  const [otherText, setOtherText] = useState('');
 
   const toggle = (id) => {
     if (config.multiSelect) {
@@ -246,9 +296,11 @@ function IconGrid({ step, language, onSubmit, isProcessing }) {
 
   const handleConfirm = () => {
     if (!selected.length) return;
-    const text = config.buildTranscript(selected, language);
-    onSubmit(text);
+    const text = config.buildTranscript(selected, language, otherText);
+    onSubmit(text, selected);
   };
+
+  const isContinueDisabled = !selected.length || isProcessing || (selected.includes('other') && !otherText.trim());
 
   return (
     <div className="space-y-3">
@@ -277,10 +329,22 @@ function IconGrid({ step, language, onSubmit, isProcessing }) {
         })}
       </div>
 
+      {selected.includes('other') && (
+        <div className="pt-2 animate-in fade-in slide-in-from-top-2 duration-300">
+          <textarea
+            value={otherText}
+            onChange={(e) => setOtherText(e.target.value)}
+            placeholder={language === 'hi' ? 'कृपया अपनी समस्या बताएं...' : 'Please describe your reason...'}
+            className="w-full px-4 py-3 rounded-2xl bg-[#F6F9FF] border border-[#E2E8F4] text-[#1A2B4C] placeholder-[#6B7A99] focus:outline-none focus:border-[#2F6FED] text-xs resize-none"
+            rows={2}
+          />
+        </div>
+      )}
+
       <div className="flex justify-end pt-2">
         <button
           onClick={handleConfirm}
-          disabled={!selected.length || isProcessing}
+          disabled={isContinueDisabled}
           className="px-6 py-2.5 rounded-full bg-[#2F6FED] hover:bg-[#255BC7] text-white text-xs font-semibold transition disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
         >
           {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -329,6 +393,7 @@ function SingleSelect({ step, language, onSubmit, isProcessing }) {
 function ChipGrid({ step, language, onSubmit, isProcessing }) {
   const config = TAP_STEPS[step];
   const [selected, setSelected] = useState([]);
+  const [otherText, setOtherText] = useState('');
 
   const toggle = (id) => {
     if (id === 'none') {
@@ -343,9 +408,11 @@ function ChipGrid({ step, language, onSubmit, isProcessing }) {
 
   const handleConfirm = () => {
     if (!selected.length) return;
-    const text = config.buildTranscript(selected, language);
+    const text = config.buildTranscript(selected, language, otherText);
     onSubmit(text);
   };
+
+  const isContinueDisabled = !selected.length || isProcessing || (selected.includes('other') && !otherText.trim());
 
   return (
     <div className="space-y-3">
@@ -368,10 +435,22 @@ function ChipGrid({ step, language, onSubmit, isProcessing }) {
         })}
       </div>
 
+      {selected.includes('other') && (
+        <div className="pt-2 animate-in fade-in slide-in-from-top-2 duration-300">
+          <textarea
+            value={otherText}
+            onChange={(e) => setOtherText(e.target.value)}
+            placeholder={language === 'hi' ? 'कृपया अन्य लक्षण बताएं...' : 'Please describe other symptoms...'}
+            className="w-full px-4 py-3 rounded-2xl bg-[#F6F9FF] border border-[#E2E8F4] text-[#1A2B4C] placeholder-[#6B7A99] focus:outline-none focus:border-[#2F6FED] text-xs resize-none"
+            rows={2}
+          />
+        </div>
+      )}
+
       <div className="flex justify-end pt-2">
         <button
           onClick={handleConfirm}
-          disabled={!selected.length || isProcessing}
+          disabled={isContinueDisabled}
           className="px-6 py-2.5 rounded-full bg-[#2F6FED] hover:bg-[#255BC7] text-white text-xs font-semibold transition disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
         >
           {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -2151,6 +2230,7 @@ export default function IntakeFlow({
 
   const [language, setLanguage] = useState(initialPatient?.language || 'en');
   const [mode, setMode] = useState('speak');
+  const [clinicalSteps, setClinicalSteps] = useState(DEFAULT_CLINICAL_STEPS);
   const [patient, setPatient] = useState(initialPatient || null);
   const [visitId, setVisitId] = useState(null);
   const [patientToken, setPatientToken] = useState(
@@ -2190,7 +2270,7 @@ export default function IntakeFlow({
   const isHoldPressRef = useRef(false);
 
   const isIntroStep = false;
-  const currentStep = CLINICAL_STEPS[currentStepIndex] || 'chief_complaint';
+  const currentStep = clinicalSteps[currentStepIndex] || 'chief_complaint';
 
   const handlePatientInfoContinue = ({ name, age, lang }) => {
     setPendingPatientInfo({ name, age, lang });
@@ -2481,11 +2561,21 @@ export default function IntakeFlow({
     setError(null);
     setInaudibleNotice(null);
 
+    // Capture current step values before any state updates
+    const stepAtSubmit = clinicalSteps[currentStepIndex] || 'chief_complaint';
+    const stepIndexAtSubmit = currentStepIndex;
+    const stepsAtSubmit = [...clinicalSteps];
+    const nextStepHint = stepsAtSubmit[stepIndexAtSubmit + 1] || null;
+
     try {
       const formData = new FormData();
       formData.append('visit_id', visitId);
-      formData.append('step', currentStep);
+      formData.append('step', stepAtSubmit);
       formData.append('language', language);
+      // Tell backend what the next step will be (supports adaptive steps)
+      if (nextStepHint) {
+        formData.append('next_step_hint', nextStepHint);
+      }
       if (transcriptText) {
         formData.append('transcript_text', transcriptText);
         formData.append('transcript', transcriptText);
@@ -2520,9 +2610,9 @@ export default function IntakeFlow({
           setRetryCount(0);
           setTurns(prev => [
             ...prev,
-            { step: currentStep, prompt: currentPrompt, transcript: effectiveTranscript.trim() },
+            { step: stepAtSubmit, prompt: currentPrompt, transcript: effectiveTranscript.trim() },
           ]);
-          if (currentStepIndex >= CLINICAL_STEPS.length - 1) {
+          if (stepIndexAtSubmit >= stepsAtSubmit.length - 1) {
             setIsComplete(true);
             setLinearStage('upload_docs');
           } else {
@@ -2537,6 +2627,23 @@ export default function IntakeFlow({
 
       const data = await res.json();
 
+      // --- Voice mode: inject adaptive steps from backend suggestion ---
+      // This mirrors what tap mode does in handleTapSubmit, but driven by backend keyword detection.
+      if (stepAtSubmit === 'chief_complaint' && data.suggested_adaptive_steps?.length) {
+        setClinicalSteps(prev => {
+          const updated = [...prev];
+          let insertIndex = stepIndexAtSubmit + 2; // after 'duration'
+          for (const adaptiveStep of data.suggested_adaptive_steps) {
+            if (!updated.includes(adaptiveStep)) {
+              updated.splice(insertIndex, 0, adaptiveStep);
+              insertIndex++;
+            }
+          }
+          console.info('[Adaptive] Voice mode injected steps:', updated);
+          return updated;
+        });
+      }
+
       // Check for inaudible/unintelligible audio from backend
       if (data.is_inaudible || data.transcript === '[inaudible]') {
         // If Web Speech gave us something useful, use it instead
@@ -2546,9 +2653,9 @@ export default function IntakeFlow({
           setRetryCount(0);
           setTurns(prev => [
             ...prev,
-            { step: currentStep, prompt: currentPrompt, transcript: effectiveTranscript.trim() },
+            { step: stepAtSubmit, prompt: currentPrompt, transcript: effectiveTranscript.trim() },
           ]);
-          if (currentStepIndex >= CLINICAL_STEPS.length - 1) {
+          if (stepIndexAtSubmit >= stepsAtSubmit.length - 1) {
             setIsComplete(true);
             setLinearStage('upload_docs');
           } else {
@@ -2573,7 +2680,7 @@ export default function IntakeFlow({
       setTurns(prev => [
         ...prev,
         {
-          step: currentStep,
+          step: stepAtSubmit,
           prompt: currentPrompt,
           transcript: data.transcript || transcriptText || fallbackClientTranscript,
         },
@@ -2585,7 +2692,9 @@ export default function IntakeFlow({
         setUrgencyReason(data.urgency_reason || 'Urgent symptom combination detected');
       }
 
-      if (data.is_complete || currentStepIndex >= CLINICAL_STEPS.length - 1) {
+      // Completion: trust frontend clinicalSteps length as source of truth.
+      // (The backend may say is_complete based on the base 6 steps, but we may have injected adaptive steps.)
+      if (stepIndexAtSubmit >= stepsAtSubmit.length - 1) {
         setIsComplete(true);
         setLinearStage('upload_docs');
       } else {
@@ -2607,9 +2716,9 @@ export default function IntakeFlow({
         setRetryCount(0);
         setTurns(prev => [
           ...prev,
-          { step: currentStep, prompt: currentPrompt, transcript: fb.trim() },
+          { step: stepAtSubmit, prompt: currentPrompt, transcript: fb.trim() },
         ]);
-        if (currentStepIndex >= CLINICAL_STEPS.length - 1) {
+        if (stepIndexAtSubmit >= stepsAtSubmit.length - 1) {
           setIsComplete(true);
           setLinearStage('upload_docs');
         } else {
@@ -2622,6 +2731,32 @@ export default function IntakeFlow({
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleTapSubmit = (text, selectedOptions) => {
+    // Inject adaptive steps based on selected symptom IDs (tap mode)
+    if (currentStep === 'chief_complaint' && selectedOptions) {
+      setClinicalSteps(prev => {
+        const newSteps = [...prev];
+        let insertIndex = currentStepIndex + 2; // Insert after 'duration'
+        let changed = false;
+        if (selectedOptions.includes('fever') && !newSteps.includes('fever_details')) {
+          newSteps.splice(insertIndex, 0, 'fever_details');
+          insertIndex++;
+          changed = true;
+        }
+        if (selectedOptions.includes('pain') && !newSteps.includes('pain_details')) {
+          newSteps.splice(insertIndex, 0, 'pain_details');
+          insertIndex++;
+          changed = true;
+        }
+        if (changed) {
+          console.info('[Adaptive] Tap mode injected steps:', newSteps);
+        }
+        return newSteps;
+      });
+    }
+    submitTurnAnswer(text);
   };
 
   const handleStartRecording = async () => {
@@ -2814,6 +2949,7 @@ export default function IntakeFlow({
     setVisitId(null);
     setTurns([]);
     setCurrentStepIndex(0);
+    setClinicalSteps(DEFAULT_CLINICAL_STEPS);
     setIsComplete(false);
     setUrgencyFlag(false);
     setUrgencyDept(null);
@@ -2953,17 +3089,17 @@ export default function IntakeFlow({
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-[#6B7A99] font-medium">
                 <span>
-                  {`Question ${currentStepIndex + 1} of ${CLINICAL_STEPS.length}: ${STEP_LABELS[currentStep]?.[language] || currentStep}`}
+                  {`Question ${currentStepIndex + 1} of ${clinicalSteps.length}: ${STEP_LABELS[currentStep]?.[language] || currentStep}`}
                 </span>
                 <span>
-                  {`${Math.round(((currentStepIndex + 1) / CLINICAL_STEPS.length) * 100)}% complete`}
+                  {`${Math.round(((currentStepIndex + 1) / clinicalSteps.length) * 100)}% complete`}
                 </span>
               </div>
               <div className="w-full h-2 bg-[#F6F9FF] border border-[#E2E8F4] rounded-full overflow-hidden">
                 <div
                   className="h-full bg-[#2F6FED] transition-all duration-300 rounded-full"
                   style={{
-                    width: `${((currentStepIndex + 1) / CLINICAL_STEPS.length) * 100}%`
+                    width: `${((currentStepIndex + 1) / clinicalSteps.length) * 100}%`
                   }}
                 />
               </div>
@@ -3095,7 +3231,7 @@ export default function IntakeFlow({
                   <TapStepUI
                     step={currentStep}
                     language={language}
-                    onSubmit={(text) => submitTurnAnswer(text)}
+                    onSubmit={handleTapSubmit}
                     isProcessing={isProcessing}
                     inputType={currentInputType}
                     backendStepInputTypes={backendStepInputTypes}

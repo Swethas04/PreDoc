@@ -15,6 +15,7 @@ import {
   User,
   Calendar,
   Lock,
+  Pill,
 } from 'lucide-react';
 
 const API_BASE = '/api';
@@ -351,12 +352,22 @@ export default function DoctorDashboard({ onOpenReview, onNavigateIntake, authTo
                   </div>
                 </div>
 
-                {/* Right Action Button */}
-                <div className="flex items-center gap-2.5 w-full md:w-auto flex-shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-[#E2E8F4]">
+                {/* Right Action Buttons */}
+                <div className="flex items-center gap-2.5 w-full md:w-auto flex-shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-[#E2E8F4] flex-wrap sm:flex-nowrap">
                   <button
                     type="button"
                     onClick={() => onOpenReview(item.visit_id)}
-                    className={`w-full md:w-auto px-6 py-3 rounded-full text-xs font-bold transition flex items-center justify-center gap-2 shadow-sm ${
+                    className="w-full md:w-auto px-4 py-2.5 rounded-full text-xs font-bold transition flex items-center justify-center gap-1.5 bg-[#F6F9FF] border border-[#CBD5E1] text-[#1A2B4C] hover:bg-[#EAF1FF] hover:text-[#2F6FED] hover:border-[#2F6FED] shadow-xs"
+                    title="Write or manage prescription"
+                  >
+                    <Pill className="w-3.5 h-3.5 text-[#2F6FED]" />
+                    <span>Prescribe (Rx)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onOpenReview(item.visit_id)}
+                    className={`w-full md:w-auto px-5 py-2.5 rounded-full text-xs font-bold transition flex items-center justify-center gap-2 shadow-sm ${
                       isApproved
                         ? 'bg-white border border-[#2F6FED] text-[#2F6FED] hover:bg-[#EAF1FF]'
                         : 'bg-[#2F6FED] hover:bg-[#255BC7] text-white'
@@ -364,7 +375,7 @@ export default function DoctorDashboard({ onOpenReview, onNavigateIntake, authTo
                   >
                     <FileText className="w-4 h-4" />
                     <span>
-                      {isApproved ? 'View finalized case' : 'Review & edit draft →'}
+                      {isApproved ? 'View case' : 'Review draft →'}
                     </span>
                   </button>
                 </div>

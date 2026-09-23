@@ -11,11 +11,13 @@ import {
   User,
   LogOut,
   Heart,
+  Pill,
 } from 'lucide-react';
 import PatientKiosk from './components/PatientKiosk';
 import CaseDraftPage from './components/CaseDraftPage';
 import TriageDashboard from './components/TriageDashboard';
 import DoctorDashboard from './components/DoctorDashboard';
+import PrescriptionTab from './components/PrescriptionTab';
 import RoleLanding from './components/RoleLanding';
 import StaffLogin from './components/StaffLogin';
 
@@ -264,6 +266,15 @@ function DoctorShell({
       badgeActiveColor: 'bg-white/20 text-white',
       roles: ['doctor'],
     },
+    {
+      id: 'prescriptions',
+      label: 'Prescriptions',
+      icon: Pill,
+      badge: null,
+      badgeColor: 'bg-[#EAF1FF] text-[#2F6FED]',
+      badgeActiveColor: 'bg-white text-[#2F6FED]',
+      roles: ['doctor'],
+    },
   ];
 
   const NAV_TABS = allTabs.filter((tab) => tab.roles.includes(currentUser?.role || 'doctor'));
@@ -389,6 +400,15 @@ function DoctorShell({
             visitId={currentVisitId}
             onBack={() => navigateToTab('doctor')}
             onNavigateVisit={navigateToCase}
+            authToken={authToken}
+            onAuthError={onLogout}
+          />
+        )}
+        {activeTab === 'prescriptions' && !isNurse && (
+          <PrescriptionTab
+            visitId={currentVisitId}
+            patientData={null}
+            doctorName={currentUser?.username ? `Dr. ${currentUser.username}` : 'Dr. Attending Physician'}
             authToken={authToken}
             onAuthError={onLogout}
           />
